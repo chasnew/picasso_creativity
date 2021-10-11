@@ -1,0 +1,312 @@
+---
+title: "Picasso data exploration"
+author: "Chanuwas (New) Aswamenakul"
+output: html_notebook
+---
+
+### would be interesting to make plots of locations of each artwork.
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(stringr)
+library(entropy)
+library(cowplot)
+```
+
+# Data loading
+```{r}
+art_data <- read.delim("raw_data/artwork1.csv", colClasses = "character") # /t as separator
+
+# parse out date, month, and year variables from existing columns
+art_data <- art_data %>% 
+  separate(dateEnd, c("yearEnd","monthEnd","dayEnd"), remove = FALSE) %>% 
+  separate(dateStart, c("yearStart","monthStart","dayStart"), remove = FALSE) %>% 
+  mutate(yearEnd = as.numeric(yearEnd),
+         monthEnd = as.numeric(monthEnd),
+         dayEnd = as.numeric(dayEnd),
+         yearStart = as.numeric(yearStart),
+         monthStart = as.numeric(monthStart),
+         dayStart = as.numeric(dayStart))
+
+# remove weird data (8 entries)
+art_data <- art_data %>%
+  filter(category != "25~26-March/1936") %>% # shifted column (fixable)
+  filter(category != "") %>% # empty rows
+  filter(yearEnd != 0) # 2 entries w/ missing end dates
+
+# number of years to finish
+art_data <- art_data %>%
+  mutate(yearDuration = yearEnd - yearStart)
+
+# fill months and dates
+art_data <- art_data %>% 
+  mutate(monthEnd_fix = case_when(monthEnd == 0 ~ 6.5,
+                                  TRUE ~ monthEnd),
+         dayEnd_fix = case_when(dayEnd == 0 ~ 15.5,
+                                  TRUE ~ dayEnd),
+         monthStart_fix = case_when(monthStart == 0 ~ 6.5,
+                                  TRUE ~ monthStart),
+         dayStart_fix = case_when(dayStart == 0 ~ 15.5,
+                                  TRUE ~ dayStart)) %>%
+  mutate(dateEnd = make_date(yearEnd, monthEnd_fix, dayEnd_fix), # convert dateEnd into date type
+         dateStart = make_date(yearStart, monthStart_fix, dayStart_fix), # convert dateStart into date type
+         yearMonthStart = yearStart + monthStart_fix/12 + dayStart_fix/365) %>% # convert date into year scale
+  mutate(date_duration = dateEnd - dateStart)
+```
+
+# Missingness
+```{r}
+# aggregate art counts by year and category
+agg_count <- art_data %>% 
+  group_by(yearStart, category) %>% summarise(count = n(), .groups = "drop")
+
+# rows where month and date aren't specified (6378 entries)
+missing_count <- art_data %>%
+  filter(monthEnd == 0 | dayEnd == 0 | dayStart == 0 | monthStart == 0) %>%
+  group_by(yearStart, category) %>% summarise(ms_count = n(), .groups = "drop")
+
+# merge aggregate data with missingness count (replace NA with 0)
+missing_count <- agg_count %>%
+  left_join(missing_count, by = c("yearStart", "category")) %>%
+  mutate(ms_count = replace_na(ms_count, 0))
+
+# visualize missing month/day by year
+missing_count %>% 
+  group_by(yearStart) %>%
+  summarise(total_count = sum(count), ms_count = sum(ms_count)) %>%
+  mutate(ms_prop = ms_count/total_count) %>%
+  ggplot(aes(x=yearStart, y=ms_prop)) +
+  geom_bar(stat="identity") +
+  scale_y_continuous(limits = c(0,1)) +
+  theme_minimal()
+
+# visualize missing month/day by category
+missing_count %>% 
+  group_by(category) %>%
+  summarise(total_count = sum(count), ms_count = sum(ms_count)) %>%
+  mutate(ms_prop = ms_count/total_count) %>%
+  ggplot(aes(x=category, y=ms_prop)) +
+  geom_bar(stat="identity") +
+  scale_y_continuous(limits = c(0,1)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle=30))
+```
+
+# Exploratory plots
+```{r}
+# duration of work on each artwork
+art_data %>% 
+  ggplot(aes(x=yearStart, y=yearDuration, group=category, color=category)) + 
+  geom_point() + 
+  facet_wrap(~category, scales="free_y") + 
+  scale_x_continuous(breaks = seq(1800, 2000, 25)) %>% 
+  scale_color_discrete(guide=FALSE)
+
+# start and end of work
+art_data %>%
+  ggplot(aes(x=yearStart, y=yearEnd, color=category)) +
+  geom_point(aes(alpha= yearDuration)) +
+  # geom_segment(aes(xend=category, yend=yearEnd), position=position_dodge(width=.5)) +
+  facet_wrap(~category, scales="free_y") +
+  scale_x_continuous(breaks = seq(1800, 2000, 25)) %>%
+  scale_color_discrete(guide=FALSE)
+```
+
+```{r}
+# number of artworks by year in each category
+art_byYear <- art_data %>% 
+  group_by(yearEnd, category) %>% 
+  summarize(n = n(), .groups="drop") 
+
+# expand years in each category and fill w/ 0
+art_byYear <- art_byYear %>% 
+  complete(expand(art_byYear, yearEnd, category), fill=list(n = 0)) %>%
+  mutate(any_artworks = n > 0)
+
+art_byYear %>% 
+  ggplot(aes(x=yearEnd, y=n, group=category, color=category, fill=any_artworks)) + 
+  geom_point(shape=21) + 
+  geom_smooth(method="loess") + 
+  facet_wrap(~category, scale="free_y") + 
+  scale_x_continuous(breaks = seq(1800, 2000, 25)) +
+  scale_color_discrete(guide=F) + 
+  scale_fill_manual(values = c("white", "black"), guide=F)
+```
+
+# Spatial exploration
+```{r}
+art_data$location <- art_data$location %>%
+  str_replace_all("\\[*\\]*", "") %>% 
+  str_replace_all("~", " ") %>%
+  tolower()
+
+# track Picasso's location
+# count category in each city
+# count transitions between cities
+
+# two entries where duration and location are swapped
+onecity_arts <- art_data %>%
+  filter(!str_detect(location, " |[0-9]")) %>%
+  select(opp, title, category, medium, location, dateStart, dateEnd, yearMonthStart)
+
+onecity_arts %>% ggplot(aes(x = dateStart, y = location, color = location)) +
+  geom_point(position = "jitter") +
+  theme(legend.position = "none")
+
+# track_data <- onecity_arts melt
+
+# Set up non-overlapping windows
+annualBins <- 12 # 12 months
+windowSize <- 1/annualBins # window size on the year scale (1 month)
+
+# major artistic periods
+# Get actual start dates from the OPP: 
+# https://picasso.shsu.edu/index.php?view=BioSearch&Keywords=%3CartisticPeriod%3E&Commentary=&SearchStyle=Continuous&SearchBy=monthday&StartMonth=1&StartDay=1&StartYear=1881&EndMonth=12&EndDay=31&EndYear=1973&Sort=asc&page=1
+majorPeriodOnset <- tibble(period = c("Blue",
+                                      "Rose",
+                                      "Les Demoiselles d'Avignon",
+                                      "Horta de Hebra landscapes",
+                                      "Analytic Cubism",
+                                      "Synthetic Cubism",
+                                      "WW1 Start",
+                                      "Neoclassicism", 
+                                      "Surrealism\n(Mandoline et guitare)",
+                                      "Surrealism\n(Trois denseurs)"),
+                           yearMonthStart = c(1901,
+                                              1904, 
+                                              1907.583,
+                                              1909.750,
+                                              1912 + 9/12,
+                                              1912.5,
+                                              1914.5, 
+                                              1918, 
+                                              1924.583, 
+                                              1925+2/12)) %>% 
+  mutate(timeWindow = ceiling(yearMonthStart / windowSize) * windowSize,
+         onsetYear = floor(timeWindow), dummy_loc = "nimes") # dummy_loc determines the position of labels
+
+onecity_arts %>% ggplot(aes(x = yearMonthStart, y = location, color = location)) +
+  geom_point(position = "jitter") +
+  geom_vline(xintercept = majorPeriodOnset$timeWindow, linetype='dashed') +
+  geom_label(data=majorPeriodOnset, aes(x=timeWindow, label=period, 
+                                        color=period, y=dummy_loc), alpha=.5) +
+  scale_x_continuous("year (started)", breaks=seq(1800, 2000, 5)) +
+  coord_cartesian(xlim = c(1898,1928)) +
+  theme(legend.position = "none")
+```
+
+
+# Windowed time series analyses
+
+```{r}
+# count the number of artworks produced in each category and month
+art_byMonth <- art_data %>% 
+  mutate(timeWindow = ceiling(yearMonthStart / windowSize) * windowSize) %>% # group by month (on the year scale)
+  group_by(timeWindow, category) %>% 
+  summarize(n = n(), .groups="drop")  
+
+art_byMonth <- art_byMonth %>% 
+  complete(tidyr::expand(art_byMonth, timeWindow, category), fill=list(n = 0)) %>%
+  mutate(any_artworks = n > 0)
+
+art_byMonth <- art_byMonth %>%
+  mutate(yearStart = floor(timeWindow))
+
+# count the number of artworks produced in each location and month
+artloc_byMonth <- onecity_arts %>% 
+  mutate(timeWindow = ceiling(yearMonthStart / windowSize) * windowSize) %>% # group by month (on the year scale)
+  group_by(timeWindow, location) %>% 
+  summarize(n = n(), .groups="drop")  
+
+artloc_byMonth <- artloc_byMonth %>% 
+  complete(tidyr::expand(artloc_byMonth, timeWindow, location), fill=list(n = 0)) %>%
+  mutate(any_artworks = n > 0)
+
+artloc_byMonth <- artloc_byMonth %>%
+  mutate(yearStart = floor(timeWindow))
+```
+
+## Entropy and productivity in each window: 
+
+Calculate entropy:
+```{r}
+# entropy with a month based on distribution of categories
+art_byMonth.ent <- art_byMonth %>%
+  group_by(timeWindow, yearStart) %>%
+  summarize(category_ent = entropy(n), 
+            total_n = sum(n),
+            .groups="drop") %>%
+  mutate(seasonContinuous = timeWindow %% 1) %>%
+  mutate(month = 1+ floor((timeWindow%%1) * 12))
+
+# smooth entropy
+art_byMonth.ent <- art_byMonth.ent %>%
+  mutate(ent.smooth.annual = ksmooth(timeWindow, 
+                                     category_ent, kernel="normal", 
+                                     bandwidth=1)$y,
+         ent.smooth.annualHalf = ksmooth(timeWindow, 
+                                         category_ent, kernel="normal", 
+                                         bandwidth=.5)$y)
+
+# location variability
+artloc.ent <- artloc_byMonth %>%
+  group_by(timeWindow, yearStart) %>%
+  summarize(loc_ent = entropy(n), 
+            total_n = sum(n),
+            .groups="drop") %>%
+  mutate(seasonContinuous = timeWindow %% 1) %>%
+  mutate(month = 1+ floor((timeWindow%%1) * 12))
+
+# smooth entropy
+artloc.ent <- artloc.ent %>%
+  mutate(ent.smooth.annual = ksmooth(timeWindow, 
+                                     loc_ent, kernel="normal", 
+                                     bandwidth=1)$y,
+         ent.smooth.annualHalf = ksmooth(timeWindow, 
+                                         loc_ent, kernel="normal", 
+                                         bandwidth=.5)$y)
+```
+
+```{r}
+# plot entropy (based on category) over time
+art_byMonth.ent %>%
+  ggplot(aes(x=timeWindow, y=ent.smooth.annual)) +
+  geom_line(aes(y=category_ent), alpha=.1) + 
+  geom_line() +
+  geom_point() +
+  scale_x_continuous("start year") +
+  scale_y_continuous("entropy (variation of category)") +
+  theme_classic()
+
+# plot entropy (based on location) over time
+artloc.ent %>%
+  ggplot(aes(x=timeWindow, y=ent.smooth.annual)) +
+  geom_line(aes(y=loc_ent), alpha=.1) + 
+  geom_line() +
+  geom_point() +
+  scale_x_continuous("start year") +
+  scale_y_continuous("entropy (variation of location)") +
+  theme_classic()
+
+# merge category entropy with location entropy
+merge.ent <- art_byMonth.ent %>% 
+  left_join(select(artloc.ent, timeWindow,
+                   loc_ent,
+                   ent.smooth.annual), by = "timeWindow") %>% 
+  mutate(loc_ent = replace_na(loc_ent, 0),
+         ent.smooth.annual.y = replace_na(ent.smooth.annual.y, 0))
+
+# visualize relationship between category entropy and location entropy
+merge.ent %>% 
+  ggplot(aes(x=category_ent, y=loc_ent)) +
+  geom_point() +
+  theme_classic()
+
+merge.ent %>%
+  ggplot(aes(x = timeWindow, y = ent.smooth.annual.x)) +
+  geom_line() +
+  geom_line(aes(x = timeWindow, y = ent.smooth.annual.y)) +
+  theme_classic()
+```
+
