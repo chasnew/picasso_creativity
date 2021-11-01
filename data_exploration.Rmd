@@ -61,7 +61,7 @@ art_data <- art_data %>%
 agg_count <- art_data %>% 
   group_by(yearStart, category) %>% summarise(count = n(), .groups = "drop")
 
-# rows where month and date aren't specified (6378 entries)
+# rows where month and date aren't specified (6378 entries): mostly missing month
 missing_count <- art_data %>%
   filter(monthEnd == 0 | dayEnd == 0 | dayStart == 0 | monthStart == 0) %>%
   group_by(yearStart, category) %>% summarise(ms_count = n(), .groups = "drop")
@@ -78,7 +78,7 @@ missing_count %>%
   mutate(ms_prop = ms_count/total_count) %>%
   ggplot(aes(x=yearStart, y=ms_prop)) +
   geom_bar(stat="identity") +
-  scale_y_continuous(limits = c(0,1)) +
+  scale_y_continuous("missingness proportion", limits = c(0,1)) +
   theme_minimal()
 
 # visualize missing month/day by category
@@ -88,7 +88,7 @@ missing_count %>%
   mutate(ms_prop = ms_count/total_count) %>%
   ggplot(aes(x=category, y=ms_prop)) +
   geom_bar(stat="identity") +
-  scale_y_continuous(limits = c(0,1)) +
+  scale_y_continuous("missingness proportion", limits = c(0,1)) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle=30))
 ```
@@ -96,6 +96,10 @@ missing_count %>%
 # Exploratory plots
 ```{r}
 # duration of work on each artwork
+art_data %>%
+  group_by(category) %>% 
+  summarise(avg_period = mean(yearDuration))
+
 art_data %>% 
   ggplot(aes(x=yearStart, y=yearDuration, group=category, color=category)) + 
   geom_point() + 
@@ -116,38 +120,51 @@ art_data %>%
 ```{r}
 # number of artworks by year in each category
 art_byYear <- art_data %>% 
-  group_by(yearEnd, category) %>% 
+  group_by(yearStart, category) %>% 
   summarize(n = n(), .groups="drop") 
 
 # expand years in each category and fill w/ 0
 art_byYear <- art_byYear %>% 
-  complete(expand(art_byYear, yearEnd, category), fill=list(n = 0)) %>%
+  complete(expand(art_byYear, yearStart, category), fill=list(n = 0)) %>%
   mutate(any_artworks = n > 0)
 
 art_byYear %>% 
-  ggplot(aes(x=yearEnd, y=n, group=category, color=category, fill=any_artworks)) + 
+  ggplot(aes(x=yearStart, y=n, group=category, color=category, fill=any_artworks)) + 
   geom_point(shape=21) + 
   geom_smooth(method="loess") + 
   facet_wrap(~category, scale="free_y") + 
-  scale_x_continuous(breaks = seq(1800, 2000, 25)) +
+  scale_x_continuous("number of artworks", breaks = seq(1800, 2000, 25)) +
   scale_color_discrete(guide=F) + 
-  scale_fill_manual(values = c("white", "black"), guide=F)
+  scale_fill_manual(values = c("white", "black"), guide=F) +
+  ylab("start year of the artwork")
 ```
 
 # Spatial exploration
 ```{r}
+# Reformating location data & Fixing location typos
+typo_locations <- c("cadaquès" = "cadaqués", "boigsloup" = "boisgeloup", "paria" = "paris",
+                 "golfe-juna" = "golfe-juan", "menerbes" = "ménerbes", "nimes" = "nîmes",
+                 "mougin" = "mougins")
+
 art_data$location <- art_data$location %>%
   str_replace_all("\\[*\\]*", "") %>% 
   str_replace_all("~", " ") %>%
-  tolower()
+  tolower() %>% 
+  str_replace_all("moygins", "mougins") %>% 
+  str_replace_all("canes|csnnes", "cannes") %>%
+  str_replace_all("vallauris-paris", "vallauris paris")
 
+# !!! = unquote splicing
+art_data <- art_data %>%
+  mutate(location = case_when(location %in% names(typo_locations) ~ recode(location, !!!typo_locations),
+                              TRUE ~ location))
 # track Picasso's location
 # count category in each city
 # count transitions between cities
 
 # two entries where duration and location are swapped
 onecity_arts <- art_data %>%
-  filter(!str_detect(location, " |[0-9]")) %>%
+  filter(!str_detect(location, " |[0-9]") | location == "cap d'antibes") %>%
   select(opp, title, category, medium, location, dateStart, dateEnd, yearMonthStart)
 
 onecity_arts %>% ggplot(aes(x = dateStart, y = location, color = location)) +
@@ -163,6 +180,7 @@ windowSize <- 1/annualBins # window size on the year scale (1 month)
 # major artistic periods
 # Get actual start dates from the OPP: 
 # https://picasso.shsu.edu/index.php?view=BioSearch&Keywords=%3CartisticPeriod%3E&Commentary=&SearchStyle=Continuous&SearchBy=monthday&StartMonth=1&StartDay=1&StartYear=1881&EndMonth=12&EndDay=31&EndYear=1973&Sort=asc&page=1
+dummy_locations <- c("cannes", "nimes", "warsaw", "rome", "schoorl", "holland", "cannes", "warsaw", "toledo", "nimes")
 majorPeriodOnset <- tibble(period = c("Blue",
                                       "Rose",
                                       "Les Demoiselles d'Avignon",
@@ -184,7 +202,7 @@ majorPeriodOnset <- tibble(period = c("Blue",
                                               1924.583, 
                                               1925+2/12)) %>% 
   mutate(timeWindow = ceiling(yearMonthStart / windowSize) * windowSize,
-         onsetYear = floor(timeWindow), dummy_loc = "nimes") # dummy_loc determines the position of labels
+         onsetYear = floor(timeWindow), dummy_loc = dummy_locations) # dummy_loc determines the position of labels
 
 onecity_arts %>% ggplot(aes(x = yearMonthStart, y = location, color = location)) +
   geom_point(position = "jitter") +
@@ -276,7 +294,7 @@ art_byMonth.ent %>%
   geom_line() +
   geom_point() +
   scale_x_continuous("start year") +
-  scale_y_continuous("entropy (variation of category)") +
+  scale_y_continuous("entropy of category") +
   theme_classic()
 
 # plot entropy (based on location) over time
@@ -286,7 +304,7 @@ artloc.ent %>%
   geom_line() +
   geom_point() +
   scale_x_continuous("start year") +
-  scale_y_continuous("entropy (variation of location)") +
+  scale_y_continuous("entropy of location") +
   theme_classic()
 
 # merge category entropy with location entropy
@@ -307,6 +325,9 @@ merge.ent %>%
   ggplot(aes(x = timeWindow, y = ent.smooth.annual.x)) +
   geom_line() +
   geom_line(aes(x = timeWindow, y = ent.smooth.annual.y)) +
+  scale_color_manual(values=c("#F8766D", "#00BFC4"),
+                    name="Entropy",
+                    labels=c("category", "location")) +
   theme_classic()
 ```
 
