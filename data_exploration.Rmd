@@ -180,7 +180,8 @@ windowSize <- 1/annualBins # window size on the year scale (1 month)
 # major artistic periods
 # Get actual start dates from the OPP: 
 # https://picasso.shsu.edu/index.php?view=BioSearch&Keywords=%3CartisticPeriod%3E&Commentary=&SearchStyle=Continuous&SearchBy=monthday&StartMonth=1&StartDay=1&StartYear=1881&EndMonth=12&EndDay=31&EndYear=1973&Sort=asc&page=1
-dummy_locations <- c("cannes", "nimes", "warsaw", "rome", "schoorl", "holland", "cannes", "warsaw", "toledo", "nimes")
+dummy_locations <- c("cannes", "nimes", "warsaw", "rome", "schoorl",
+                     "holland", "cannes", "warsaw", "toledo", "nimes")
 majorPeriodOnset <- tibble(period = c("Blue",
                                       "Rose",
                                       "Les Demoiselles d'Avignon",
@@ -195,7 +196,7 @@ majorPeriodOnset <- tibble(period = c("Blue",
                                               1904, 
                                               1907.583,
                                               1909.750,
-                                              1912 + 9/12,
+                                              1912 + 4/12, # changed from 9/12
                                               1912.5,
                                               1914.5, 
                                               1918, 
@@ -267,6 +268,14 @@ art_byMonth.ent <- art_byMonth.ent %>%
                                          category_ent, kernel="normal", 
                                          bandwidth=.5)$y)
 
+# combine major artistic periods with category entropy
+majorPeriodOnset <- majorPeriodOnset %>%
+  left_join(select(art_byMonth.ent, timeWindow, 
+                   category_ent,
+                   ent.smooth.annual)) %>%
+  mutate(category_ent = replace_na(category_ent, 0),
+         ent.smooth.annual = replace_na(ent.smooth.annual, 0))
+
 # location variability
 artloc.ent <- artloc_byMonth %>%
   group_by(timeWindow, yearStart) %>%
@@ -297,6 +306,23 @@ art_byMonth.ent %>%
   scale_y_continuous("entropy of category") +
   theme_classic()
 
+# plot entropy (based on category) w/ major artistic periods
+art_byMonth.ent %>%
+  ggplot(aes(x=timeWindow, y=ent.smooth.annual)) +
+  geom_line(aes(y=category_ent), alpha=.1) + 
+  geom_vline(xintercept = majorPeriodOnset$timeWindow, linetype='dashed') +
+  geom_line() +
+  geom_point() +
+  geom_label(data=majorPeriodOnset, aes(x=timeWindow, label=period, 
+                                        fill=period,
+                                        y=ent.smooth.annual+.6),
+             alpha=.5) +
+  scale_x_continuous("start year") +
+  scale_y_continuous("entropy of category") +
+  coord_cartesian(xlim = c(1898,1928)) +
+  theme_classic() +
+  theme(legend.position = "none")
+
 # plot entropy (based on location) over time
 artloc.ent %>%
   ggplot(aes(x=timeWindow, y=ent.smooth.annual)) +
@@ -322,12 +348,11 @@ merge.ent %>%
   theme_classic()
 
 merge.ent %>%
-  ggplot(aes(x = timeWindow, y = ent.smooth.annual.x)) +
+  select(timeWindow, ent.smooth.annual.x, ent.smooth.annual.y) %>% 
+  pivot_longer(!timeWindow, names_to = "attribute", values_to = "ent.smooth") %>% 
+  ggplot(aes(x = timeWindow, y = ent.smooth, color = attribute)) +
   geom_line() +
-  geom_line(aes(x = timeWindow, y = ent.smooth.annual.y)) +
-  scale_color_manual(values=c("#F8766D", "#00BFC4"),
-                    name="Entropy",
-                    labels=c("category", "location")) +
+  scale_color_discrete(labels = c("category", "location")) +
   theme_classic()
 ```
 
