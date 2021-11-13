@@ -196,7 +196,7 @@ majorPeriodOnset <- tibble(period = c("Blue",
                                               1904, 
                                               1907.583,
                                               1909.750,
-                                              1912 + 4/12, # changed from 9/12
+                                              1912 + 9/12, # changed from 9/12
                                               1912.5,
                                               1914.5, 
                                               1918, 
