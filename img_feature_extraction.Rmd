@@ -56,10 +56,12 @@ art_data <- art_data %>%
   mutate(date_duration = dateEnd - dateStart)
 ```
 ```{r}
+to_plot <- TRUE
+
 # artwork images
 sample_dir <- c("Blue", "Cubism", "Neoclassicism")
-sample_images <- list.files(file.path("sample_images", sample.dir[1]))
-sample_path <- file.path("sample_images", sample.dir[1], sample.images[1])
+sample_images <- list.files(file.path("sample_images", sample_dir[1]))
+sample_path <- file.path("sample_images", sample_dir[1], sample_images[1])
 
 img <- image_load(sample_path, target_size = c(224,224))
 
@@ -69,6 +71,13 @@ model <- application_vgg16(weights = 'imagenet', include_top = FALSE)
 
 # as.raster to plot
 x <- image_to_array(img)
+
+if(to_plot) {
+  x %>%
+    as.raster(max=255L) %>% 
+    plot()
+}
+
 x <- array_reshape(x, c(1, dim(x)))
 x <- imagenet_preprocess_input(x)
 
