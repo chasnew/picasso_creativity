@@ -8,12 +8,15 @@ output: html_notebook
 
 ```{r}
 library(tidyverse)
+library(abind)
 library(lubridate)
 library(stringr)
 library(imager)
 library(tensorflow)
 library(keras)
+library(Rtsne)
 ```
+
 # Data loading
 ```{r}
 # artwork tabular data
@@ -56,18 +59,27 @@ art_data <- art_data %>%
   mutate(date_duration = dateEnd - dateStart)
 ```
 ```{r}
-to_plot <- TRUE
+# sample image feature extraction
+to_plot <- FALSE
 
-# artwork images
-sample_dir <- c("Blue", "Cubism", "Neoclassicism")
-sample_images <- list.files(file.path("sample_images", sample_dir[1]))
-sample_path <- file.path("sample_images", sample_dir[1], sample_images[1])
-
-img <- image_load(sample_path, target_size = c(224,224))
-
-# feature extraction
+# model loading
 # vgg16 (https://neurohive.io/en/popular-networks/vgg16/)
-model <- application_vgg16(weights = 'imagenet', include_top = FALSE)
+base_model <- application_vgg16(weights = 'imagenet')
+summary(base_model) # display layer names
+
+# extract intermediate layers
+model.conv1 <- keras_model(inputs = base_model$input,
+                           outputs = get_layer(base_model, 'block1_conv1')$output)
+model.pool1 <- keras_model(inputs = base_model$input,
+                           outputs = get_layer(base_model, 'block1_pool')$output)
+
+# image path
+sample_dir <- c("Blue", "Rose", "Cubism", "Neoclassicism", "Surrealism")
+sample_images <- list.files(file.path("sample_images", sample_dir[1]), full.names = TRUE)
+sample_path <- sample_images[1]
+
+# load single image
+img <- image_load(sample_path, target_size = c(224,224))
 
 # as.raster to plot
 x <- image_to_array(img)
@@ -81,6 +93,73 @@ if(to_plot) {
 x <- array_reshape(x, c(1, dim(x)))
 x <- imagenet_preprocess_input(x)
 
-features <- model %>% predict(x)
+# load multiple images
+x <- map(sample_images,
+         ~image_load(.x, target_size = c(224,224), grayscale = FALSE) %>% 
+           image_to_array() %>% 
+           divide_by(255)
+         ) %>% # result in list
+  array(unlist(x), dim = c(224, 224, 3, length(x))) %>% # convert into an array
+  aperm(c(4,1,2,3))
+
+# feature extraction
+feature.conv1 <- model.conv1 %>% predict(x)
+feature.pool1 <- model.pool1 %>% predict(x)
+```
+
+```{r}
+# artwork images
+sample_dir <- c("Blue", "Rose", "Cubism", "Neoclassicism", "Surrealism")
+
+# model loading
+base_model <- application_vgg16(weights = 'imagenet')
+# intermediate layers
+model.conv1 <- keras_model(inputs = base_model$input,
+                           outputs = get_layer(base_model, 'block1_conv1')$output)
+model.pool1 <- keras_model(inputs = base_model$input,
+                           outputs = get_layer(base_model, 'block1_pool')$output)
+
+sample_features <- c()
+sample_labels <- rep(sample_dir, each = 5)
+for (period in sample_dir) {
+  sample_images <- list.files(file.path("sample_images", period), full.names = TRUE)
+  
+  x <- map(sample_images,
+           ~image_load(.x, target_size = c(224,224), grayscale = FALSE) %>% 
+             image_to_array() %>% 
+             divide_by(255)
+         ) # result in list
+  x <- array(unlist(x), dim = c(224, 224, 3, length(x))) %>% # convert into an array
+    aperm(c(4,1,2,3))
+  
+  feature.conv1 <- model.conv1 %>%
+    predict(x) %>%
+    rowMeans(dims = 2)
+  feature.pool1 <- model.pool1 %>% 
+    predict(x) %>% 
+    rowMeans(dims = 2)
+  
+  img_features <- cbind(feature.conv1, feature.pool1)
+  sample_features <- rbind(sample_features, img_features)
+}
+
+# PCA analysis
+pca.results <- prcomp(sample_features,
+                      center = TRUE,
+                      scale. = TRUE)
+
+sample_df <- data.frame(pca.results$x[,1:2])
+sample_df$period <- sample_labels
+
+ggplot(data = sample_df, aes(x = PC1, y = PC2, color = period)) +
+  geom_point()
+
+# t-SNE analysis
+sample_tsne <- sample_features %>% Rtsne(perplexity = 5)
+sample_tsne <- sample_tsne$Y %>% as.data.frame() %>% rename(tSNE1 = "V1", tSNE2 = "V2")
+sample_tsne$period <- sample_labels
+
+ggplot(data = sample_tsne, aes(x = tSNE1, y = tSNE2, color = period)) +
+  geom_point()
 ```
 
