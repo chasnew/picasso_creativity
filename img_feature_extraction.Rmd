@@ -284,14 +284,25 @@ ggplot(data = sample_df, aes(x = full_pc1, y = full_pc2, label = opp, color = ye
   labs(title = "full PCA results")
 
 ## t-SNE
+ggplot(data = sample_df, aes(x = low_tsne1, y = low_tsne2, label = opp, color = yearMonthStart)) +
+  geom_point() +
+  geom_text_repel(size = 2.5) +
+  scale_color_gradient2(midpoint = median(sample_df$yearMonthStart), mid = "grey90") +
+  labs(title = "low-level tSNE results") +
+  theme_classic()
+
 ggplot(data = sample_df, aes(x = high_tsne1, y = high_tsne2, label = opp, color = yearMonthStart)) +
   geom_point() +
   geom_text_repel(size = 2.5) +
-  labs(title = "high-level tSNE results")
+  scale_color_gradient2(midpoint = median(sample_df$yearMonthStart), mid = "grey90") +
+  labs(title = "high-level tSNE results") +
+  theme_classic()
 
 ggplot(data = sample_df, aes(x = full_tsne1, y = full_tsne2, label = opp, color = yearMonthStart)) +
   geom_point() +
-  geom_text_repel(size = 2.5)
-  labs(title = "full tSNE results")
+  geom_text_repel(size = 2.5) +
+  scale_color_gradient2(midpoint = median(sample_df$yearMonthStart), mid = "grey90") +
+  labs(title = "full tSNE results") +
+  theme_classic()
 ```
 
