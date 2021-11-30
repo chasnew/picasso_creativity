@@ -165,6 +165,9 @@ model.fc2 <- keras_model(inputs = base_model$input,
                          outputs = get_layer(base_model, 'fc2')$output)
 
 # retrieve file names
+img_dir <- "~/Box/QuantifyingPicasso/data_from_OPP/OPP_images/"
+year_list <- list.files(img_dir)
+
 sample_images <- list.files("sample_images")
 full_paths <- paste0("sample_images/", sample_images)
 
