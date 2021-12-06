@@ -313,13 +313,13 @@ sample_df <- data.frame(opp = sample_paintings$opp, yearMonthStart = sample_pain
 sample_df <- cbind(sample_df, low_features[,1:2], high_features[,1:2])
 
 # t-SNE analysis
-low_tsne <- low_features %>% Rtsne(perplexity = 30)
+low_tsne <- low_features %>% Rtsne(perplexity = 30, pca = FALSE)
 low_tsne <- low_tsne$Y %>% as.data.frame() %>% rename(low_tsne1 = "V1", low_tsne2 = "V2")
 
-high_tsne <- high_features %>% Rtsne(perplexity = 30)
+high_tsne <- high_features %>% Rtsne(perplexity = 30, pca = FALSE)
 high_tsne <- high_tsne$Y %>% as.data.frame() %>% rename(high_tsne1 = "V1", high_tsne2 = "V2")
 
-full_tsne <- sample_features %>% Rtsne(perplexity = 30)
+full_tsne <- sample_features %>% Rtsne(perplexity = 30, pca = FALSE)
 full_tsne <- full_tsne$Y %>% as.data.frame() %>% rename(full_tsne1 = "V1", full_tsne2 = "V2")
 
 sample_df <- cbind(sample_df, low_tsne, high_tsne, full_tsne)
