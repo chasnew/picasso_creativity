@@ -311,6 +311,7 @@ sample_features <- cbind(low_features, high_features)
 ```{r}
 sample_df <- data.frame(opp = sample_paintings$opp, yearMonthStart = sample_paintings$yearMonthStart)
 sample_df <- cbind(sample_df, low_features[,1:2], high_features[,1:2])
+sample_df$yearStart <- sample_paintings$yearStart
 
 # t-SNE analysis
 low_tsne <- low_features %>% Rtsne(perplexity = 30, pca = FALSE)
@@ -323,13 +324,14 @@ full_tsne <- sample_features %>% Rtsne(perplexity = 30, pca = FALSE)
 full_tsne <- full_tsne$Y %>% as.data.frame() %>% rename(full_tsne1 = "V1", full_tsne2 = "V2")
 
 sample_df <- cbind(sample_df, low_tsne, high_tsne, full_tsne)
-
+```
 # visualization
-## PCA
+```{r}
+# PCA
 ggplot(data = sample_df, aes(x = low_pc1, y = low_pc2, label = opp, color = yearMonthStart)) +
   geom_point() +
   # geom_text_repel(size = 2.5) +
-  scale_color_gradient2(midpoint = median(sample_df$yearMonthStart), mid = "grey90") +
+  scale_color_gradientn(colors = rainbow(7)) +
   labs(title = "low-level PCA results") +
   theme_classic()
 
@@ -347,7 +349,7 @@ ggplot(data = sample_df, aes(x = low_pc1, y = high_pc1, label = opp, color = yea
   labs(title = "full PCA results") +
   theme_classic()
 
-## t-SNE
+# t-SNE
 ggplot(data = sample_df, aes(x = low_tsne1, y = low_tsne2, label = opp, color = yearMonthStart)) +
   geom_point() +
   # geom_text_repel(size = 2.5) +
@@ -365,7 +367,53 @@ ggplot(data = sample_df, aes(x = high_tsne1, y = high_tsne2, label = opp, color 
 ggplot(data = sample_df, aes(x = full_tsne1, y = full_tsne2, label = opp, color = yearMonthStart)) +
   geom_point() +
   # geom_text_repel(size = 2.5) +
-  scale_color_gradient2(midpoint = median(sample_df$yearMonthStart), mid = "grey90") +
+  scale_color_gradientn(colors = rainbow(7)) +
+  labs(title = "full tSNE results") +
+  theme_classic()
+
+# visualize a cluster across levels
+clust1 <- sample_df %>% 
+  filter(full_tsne1 > 0, full_tsne1 < 6, full_tsne2 <-20) %>% 
+  select(opp)
+  
+ggplot(data = sample_df, aes(x = low_tsne1, y = low_tsne2, label = opp, color = opp %in% clust1$opp)) +
+  geom_point() +
+  labs(title = "low-level tSNE results") +
+  theme_classic()
+
+ggplot(data = sample_df, aes(x = high_tsne1, y = high_tsne2, label = opp, color = opp %in% clust1$opp)) +
+  geom_point() +
+  labs(title = "high-level tSNE results") +
+  theme_classic()
+
+# Artistic walk
+agg_tsne <- sample_df %>% 
+  group_by(yearStart) %>% 
+  summarize(low_tsne1_m = mean(low_tsne1), low_tsne2_m = mean(low_tsne2),
+            high_tsne1_m = mean(high_tsne1), high_tsne2_m = mean(high_tsne2),
+            full_tsne1_m = mean(full_tsne1), full_tsne2_m = mean(full_tsne2))
+
+agg_tsne %>% 
+  ggplot(aes(x = lowtsne1_m, y = lowtsne2_m, color = yearStart)) +
+  geom_path() +
+  geom_point(aes(shape = yearStart > 1912)) +
+  scale_color_gradientn(colors = rainbow(7)) +
+  labs(title = "low tSNE results") +
+  theme_classic()
+
+agg_tsne %>% 
+  ggplot(aes(x = hightsne1_m, y = hightsne2_m, color = yearStart)) +
+  geom_path() +
+  geom_point(aes(shape = yearStart > 1912)) +
+  scale_color_gradientn(colors = rainbow(7)) +
+  labs(title = "high tSNE results") +
+  theme_classic()
+
+agg_tsne %>% 
+  ggplot(aes(x = fulltsne1_m, y = fulltsne2_m, color = yearStart)) +
+  geom_path() +
+  geom_point(aes(shape = yearStart > 1912)) +
+  scale_color_gradientn(colors = rainbow(7)) +
   labs(title = "full tSNE results") +
   theme_classic()
 ```
