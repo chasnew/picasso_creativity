@@ -198,7 +198,6 @@ batch_size <- 30
 
 # retrieve file names
 year_list <- paintings %>% 
-  filter(yearStart >= 1900, yearStart <= 1970) %>% 
   pull(yearStart) %>% unique()
 
 sample_paintings <- paintings %>% 
