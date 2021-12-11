@@ -97,7 +97,7 @@ for (year in year_list) {
   
   for (path_batch in path_batches) {
     # constrctu file paths
-    sample_opps <- sample_paintings %>% 
+    sample_opps <- reduced_art %>% 
       filter(yearStart == year) %>% 
       pull(opp)
     
