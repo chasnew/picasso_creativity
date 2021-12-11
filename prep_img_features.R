@@ -10,6 +10,13 @@ category <- "painting"
 # artwork tabular data
 art_data <- read.delim("raw_data/artwork1.csv", colClasses = "character") # /t as separator
 
+# row whose columns are shifted
+tmp_ind <- art_data[art_data$opp == "OPP.36:312",] %>% rownames()
+art_data[tmp_ind, 2] <- paste(art_data[tmp_ind, 2], art_data[tmp_ind, 3])
+for (i in 3:ncol(art_data)-1) {
+  art_data[tmp_ind, i] <- art_data[tmp_ind, i+1]
+}
+
 # parse out date, month, and year variables from existing columns
 art_data <- art_data %>% 
   separate(dateEnd, c("yearEnd","monthEnd","dayEnd"), remove = FALSE) %>% 
@@ -21,9 +28,8 @@ art_data <- art_data %>%
          monthStart = as.numeric(monthStart),
          dayStart = as.numeric(dayStart))
 
-# remove weird data (8 entries)
+# remove weird data (7 entries)
 art_data <- art_data %>%
-  filter(category != "25~26-March/1936") %>% # shifted column (fixable)
   filter(category != "") %>% # empty rows
   filter(yearEnd != 0) # 2 entries w/ missing end dates
 
