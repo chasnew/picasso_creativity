@@ -48,11 +48,20 @@ model.pool1 <- keras_model(inputs = base_model$input,
 model.fc2 <- keras_model(inputs = base_model$input,
                          outputs = get_layer(base_model, 'fc2')$output)
 
+# within-year batch size
 batch_size <- 50
+
+# input year range
+start_year <- 1889
+end_year <- 1900
+arg_year_range <- start_year:end_year
 
 # retrieve file names (may need to edit to subset years)
 year_list <- reduced_art %>% 
   pull(yearStart) %>% unique()
+
+truc_yearlist <- arg_year_range[arg_year_range %in% year_list]
+# still need a way to store processed years/opps
 
 # reconstruct filename from OPP
 reconstruct_fn <- function(opp_str) {
@@ -62,7 +71,7 @@ reconstruct_fn <- function(opp_str) {
 img_dir <- "~/Box/QuantifyingPicasso/data_from_OPP/OPP_images"
 feature_dir <- "~/Box/QuantifyingPicasso/data_from_OPP/image_features"
 
-for (year in year_list) {
+for (year in truc_yearlist) {
   # enable local access to Box folder
   tmp_filelist <- list.files(file.path(img_dir, year, "ythumbs"))
   
