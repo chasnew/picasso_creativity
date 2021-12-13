@@ -74,7 +74,11 @@ img_dir <- "~/Box/QuantifyingPicasso/data_from_OPP/OPP_images"
 feature_dir <- "~/Box/QuantifyingPicasso/data_from_OPP/image_features"
 
 # track processed year and opp ids
-track_list <- list(year = c(), opp = c())
+if (file.exists("track_list.Rdata")) {
+  load("track_list.Rdata")
+} else {
+  track_list <- list(year = c(), opp = c())
+}
 
 for (year in truc_yearlist) {
   # enable local access to Box folder
@@ -163,5 +167,5 @@ for (year in truc_yearlist) {
   
   # store processed year and opp ids
   track_list %>% 
-    save(file = "processed_data.Rdata")
+    save(file = "track_list.Rdata")
 }
