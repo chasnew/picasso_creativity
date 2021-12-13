@@ -155,11 +155,11 @@ for (year in truc_yearlist) {
   
   low_features %>% 
     data.table() %>% 
-    fwrite(file.path(feature_dir, paste0("low_feature_", category, ".csv")))
+    fwrite(file.path(feature_dir, paste0("low_feature_", category, ".csv")), append = TRUE)
   
   high_features %>% 
     data.table() %>% 
-    fwrite(file.path(feature_dir, paste0("high_feature_", category, ".csv")))
+    fwrite(file.path(feature_dir, paste0("high_feature_", category, ".csv")), append = TRUE)
   
   # store processed year and opp ids
   track_list %>% 
