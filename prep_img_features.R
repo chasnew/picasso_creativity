@@ -2,6 +2,7 @@ library(tidyverse)
 library(data.table)
 library(lubridate)
 library(stringr)
+library(imager)
 library(tensorflow)
 library(keras)
 
@@ -47,6 +48,7 @@ model.pool1 <- keras_model(inputs = base_model$input,
                            outputs = get_layer(base_model, 'block1_pool')$output)
 model.fc2 <- keras_model(inputs = base_model$input,
                          outputs = get_layer(base_model, 'fc2')$output)
+print("Completed loading models")
 
 # within-year batch size
 batch_size <- 50
@@ -71,12 +73,18 @@ reconstruct_fn <- function(opp_str) {
 img_dir <- "~/Box/QuantifyingPicasso/data_from_OPP/OPP_images"
 feature_dir <- "~/Box/QuantifyingPicasso/data_from_OPP/image_features"
 
+# track processed year and opp ids
+track_list <- list(year = c(), opp = c())
+
 for (year in truc_yearlist) {
   # enable local access to Box folder
   tmp_filelist <- list.files(file.path(img_dir, year, "ythumbs"))
   
   print(paste("year:", year))
   flush.console()
+  
+  # store current year
+  track_list[["year"]] <- c(track_list[["year"]], year)
   
   # retrieve filepaths of the year
   sample_opps <- reduced_art %>% 
@@ -105,15 +113,20 @@ for (year in truc_yearlist) {
   high_features <- c()
   
   for (path_batch in path_batches) {
-    # constrctu file paths
+    # extract opp ids of the batch
     sample_opps <- reduced_art %>% 
       filter(yearStart == year) %>% 
       pull(opp)
     
+    #store opp ids
+    track_list[["opp"]] <- c(track_list[["opp"]], sample_opps)
+    
+    # construct file paths
     opp_paths <- sample_opps %>% 
       reconstruct_fn() %>% 
       file.path(img_dir, year, "ythumbs", .)
     
+    # load images
     x <- map(opp_paths,
              ~image_load(.x, target_size = c(224,224), grayscale = FALSE) %>% 
                image_to_array() %>% 
@@ -122,6 +135,7 @@ for (year in truc_yearlist) {
     x <- array(unlist(x), dim = c(224, 224, 3, length(x))) %>% # convert into an array
       aperm(c(4,1,2,3))
     
+    # extract image embeddings
     feature.conv1 <- model.conv1 %>%
       predict(x) %>%
       rowMeans(dims = 2)
@@ -146,4 +160,8 @@ for (year in truc_yearlist) {
   high_features %>% 
     data.table() %>% 
     fwrite(file.path(feature_dir, paste0("high_feature_", category, ".csv")))
+  
+  # store processed year and opp ids
+  track_list %>% 
+    save("processed_data.Rdata")
 }
