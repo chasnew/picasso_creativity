@@ -55,7 +55,7 @@ batch_size <- 50
 
 # input year range
 start_year <- 1889
-end_year <- 1900
+end_year <- 1895
 arg_year_range <- start_year:end_year
 
 # retrieve file names (may need to edit to subset years)
