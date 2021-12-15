@@ -410,7 +410,9 @@ agg_tsne %>%
 ```{r}
 feature_path <- "/Users/chanuwasaswamenakul/Box/QuantifyingPicasso/data_from_OPP/image_features"
 
-low_features <- fread(file.path(feature_path, "low_feature_painting.csv"))
-high_features <- fread(file.path(feature_path, "high_feature_painting.csv"))
+low_features <- fread(file.path(feature_path, "low_feature_painting.csv")) %>% 
+  as.data.frame()
+high_features <- fread(file.path(feature_path, "high_feature_painting.csv")) %>% 
+  as.data.frame()
 ```
 
