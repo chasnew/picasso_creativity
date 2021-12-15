@@ -63,7 +63,6 @@ year_list <- reduced_art %>%
   pull(yearStart) %>% unique()
 
 truc_yearlist <- arg_year_range[arg_year_range %in% year_list]
-# still need a way to store processed years/opps
 
 # reconstruct filename from OPP
 reconstruct_fn <- function(opp_str) {
@@ -95,20 +94,33 @@ for (year in truc_yearlist) {
     filter(yearStart == year) %>% 
     pull(opp)
   
+  #store opp ids
+  track_list[["opp"]] <- c(track_list[["opp"]], sample_opps)
+  
   opp_paths <- sample_opps %>% 
     reconstruct_fn() %>% 
     file.path(img_dir, year, "ythumbs", .)
 
   # split samples into multiple batches/groups
   img_n <- length(opp_paths)
-  n_batch <- floor(img_n/batch_size)
-  group_labels <- rep(1:n_batch, each = batch_size)
-  rem <- img_n %% batch_size
   
-  if (rem != 0) {
-    group_labels <- c(group_labels, rep(n_batch+1, rem))
-    n_batch = n_batch + 1
+  # check if numger of images is smaller than batch size
+  if (img_n < batch_size) {
+    n_batch <- 1
+    group_labels <- rep(1, img_n)
+  } else {
+    n_batch <- floor(img_n/batch_size)
+    group_labels <- rep(1:n_batch, each = batch_size)
+    rem <- img_n %% batch_size
+    
+    if (rem != 0) {
+      group_labels <- c(group_labels, rep(n_batch+1, rem))
+      n_batch = n_batch + 1
+    }
   }
+  
+  print(paste("image number:", img_n))
+  print(paste("batch number:", n_batch))
   
   path_batches <- split(opp_paths, f = group_labels)
   
@@ -116,22 +128,16 @@ for (year in truc_yearlist) {
   low_features <- c()
   high_features <- c()
   
+  # batch counter
+  b_count <- 1
+  
   for (path_batch in path_batches) {
-    # extract opp ids of the batch
-    sample_opps <- reduced_art %>% 
-      filter(yearStart == year) %>% 
-      pull(opp)
-    
-    #store opp ids
-    track_list[["opp"]] <- c(track_list[["opp"]], sample_opps)
-    
-    # construct file paths
-    opp_paths <- sample_opps %>% 
-      reconstruct_fn() %>% 
-      file.path(img_dir, year, "ythumbs", .)
+    print(paste("batch", b_count))
+    flush.console
+    b_count <- b_count + 1
     
     # load images
-    x <- map(opp_paths,
+    x <- map(path_batch,
              ~image_load(.x, target_size = c(224,224), grayscale = FALSE) %>% 
                image_to_array() %>% 
                divide_by(255)
@@ -166,6 +172,5 @@ for (year in truc_yearlist) {
     fwrite(file.path(feature_dir, paste0("high_feature_", category, ".csv")), append = TRUE)
   
   # store processed year and opp ids
-  track_list %>% 
-    save(file = "track_list.Rdata")
+  save(track_list, file = "track_list.Rdata")
 }
