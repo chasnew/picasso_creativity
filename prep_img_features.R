@@ -51,11 +51,11 @@ model.fc2 <- keras_model(inputs = base_model$input,
 print("Completed loading models")
 
 # within-year batch size
-batch_size <- 50
+batch_size <- 75
 
 # input year range
-start_year <- 1889
-end_year <- 1895
+start_year <- 1901
+end_year <- 1920
 arg_year_range <- start_year:end_year
 
 # retrieve file names (may need to edit to subset years)
@@ -86,16 +86,10 @@ for (year in truc_yearlist) {
   print(paste("year:", year))
   flush.console()
   
-  # store current year
-  track_list[["year"]] <- c(track_list[["year"]], year)
-  
   # retrieve filepaths of the year
   sample_opps <- reduced_art %>% 
     filter(yearStart == year) %>% 
     pull(opp)
-  
-  #store opp ids
-  track_list[["opp"]] <- c(track_list[["opp"]], sample_opps)
   
   opp_paths <- sample_opps %>% 
     reconstruct_fn() %>% 
@@ -170,6 +164,12 @@ for (year in truc_yearlist) {
   high_features %>% 
     data.table() %>% 
     fwrite(file.path(feature_dir, paste0("high_feature_", category, ".csv")), append = TRUE)
+  
+  # store current year
+  track_list[["year"]] <- c(track_list[["year"]], year)
+  
+  #store opp ids
+  track_list[["opp"]] <- c(track_list[["opp"]], sample_opps)
   
   # store processed year and opp ids
   save(track_list, file = "track_list.Rdata")
