@@ -412,11 +412,5 @@ feature_path <- "/Users/chanuwasaswamenakul/Box/QuantifyingPicasso/data_from_OPP
 
 low_features <- fread(file.path(feature_path, "low_feature_painting.csv"))
 high_features <- fread(file.path(feature_path, "high_feature_painting.csv"))
-
-
-# track_list <- list(year = 1889:1895, opp = c())
-# processed_opps <- reduced_art %>% 
-#   filter(yearStart <= 1895) %>% 
-#   pull(opp)
 ```
 
