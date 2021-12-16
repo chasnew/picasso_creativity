@@ -54,8 +54,8 @@ print("Completed loading models")
 batch_size <- 75
 
 # input year range
-start_year <- 1901
-end_year <- 1920
+start_year <- 1914
+end_year <- 1920            
 arg_year_range <- start_year:end_year
 
 # retrieve file names (may need to edit to subset years)
@@ -76,7 +76,7 @@ feature_dir <- "~/Box/QuantifyingPicasso/data_from_OPP/image_features"
 if (file.exists("track_list.Rdata")) {
   load("track_list.Rdata")
 } else {
-  track_list <- list(year = c(), opp = c())
+  track_list <- list(year = c(), opp = c(), not_found = c())
 }
 
 for (year in truc_yearlist) {
@@ -94,6 +94,12 @@ for (year in truc_yearlist) {
   opp_paths <- sample_opps %>% 
     reconstruct_fn() %>% 
     file.path(img_dir, year, "ythumbs", .)
+  
+  # check if all files exist
+  not_found <- opp_paths[!file.exists(opp_paths)]
+  if (length(not_found) > 0) {
+    opp_paths <- opp_paths[file.exists(opp_paths)]
+  }
 
   # split samples into multiple batches/groups
   img_n <- length(opp_paths)
@@ -168,8 +174,11 @@ for (year in truc_yearlist) {
   # store current year
   track_list[["year"]] <- c(track_list[["year"]], year)
   
-  #store opp ids
+  # store opp ids
   track_list[["opp"]] <- c(track_list[["opp"]], sample_opps)
+  
+  # store not found files
+  track_list[["not_found"]] <- c(track_list[["not_found"]], not_found)
   
   # store processed year and opp ids
   save(track_list, file = "track_list.Rdata")
