@@ -142,13 +142,11 @@ reconstruct_fn <- function(opp_str) {
 # sample_path <- paste0("sample_images/", sample_images[1])
 # 
 # # reconstruct OPP id from file names
-# reconstruct_opp <- function(str_vector) {
-#   return(paste0("OPP.", substr(str_vector[1], 5, 6), ":", substr(str_vector[2], 1, 3)))
+# reconstruct_opp <- function(opp) {
+#   return(paste0("OPP.", substr(opp, 5, 6), ":", substr(opp, 8, 10)))
 # }
 # 
-# sample_images %>%
-#   str_split("-") %>% 
-#   sapply(reconstruct_opp)
+# sample_images %>% reconstruct_opp
 
 # load single image
 img <- image_load(sample_path, target_size = c(224,224))
@@ -166,7 +164,7 @@ x <- array_reshape(x, c(1, dim(x)))
 x <- imagenet_preprocess_input(x)
 ```
 
-# Image feature extraction
+# Image feature extraction (Samples)
 ```{r}
 # model loading
 base_model <- application_vgg16(weights = 'imagenet')
@@ -407,12 +405,44 @@ agg_tsne %>%
   theme_classic()
 ```
 
+# Complete image features
 ```{r}
 feature_path <- "/Users/chanuwasaswamenakul/Box/QuantifyingPicasso/data_from_OPP/image_features"
+target_cat <- "painting"
 
-low_features <- fread(file.path(feature_path, "low_feature_painting.csv")) %>% 
+low_features <- fread(file.path(feature_path, paste0("low_feature_", target_cat, ".csv"))) %>% 
   as.data.frame()
-high_features <- fread(file.path(feature_path, "high_feature_painting.csv")) %>% 
+high_features <- fread(file.path(feature_path, paste0("high_feature_", target_cat, ".csv"))) %>% 
   as.data.frame()
+
+# filter out null (zero-valued) columns
+nz_masks <- high_features %>% 
+  colSums != 0
+high_features <- high_features[,nz_masks]
+
+# PCA analysis for low-leven and high-level features
+low_features <- prcomp(low_features, center = TRUE, scale. = TRUE)$x[,1:100]
+colnames(low_features) <- paste0("low_pc", 1:100)
+
+high_features <- prcomp(high_features, center = TRUE, scale. = TRUE)$x[,1:100]
+colnames(high_features) <- paste0("high_pc", 1:100)
+
+# combine low-level and high-level features
+full_features <- cbind(low_features, high_features)
+
+load("track_list.Rdata")
+
+cat_opps <- reduced_art %>% 
+  filter(category == target_cat) %>% 
+  pull(opp)
+cat_filter <- track_list$opp %in% cat_opps
+
+full_df <- data.frame(opp = track_list$opp[cat_filter]) %>% 
+  left_join(reduced_art, by = "opp")
+full_df <- cbind(full_df, full_features)
+
+full_df %>% 
+  data.table() %>% 
+  fwrite(file.path(feature_path, paste0("pca_", target_cat, ".csv")))
 ```
 
