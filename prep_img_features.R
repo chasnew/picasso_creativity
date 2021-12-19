@@ -6,7 +6,7 @@ library(imager)
 library(tensorflow)
 library(keras)
 
-category <- "painting"
+target_cat <- "painting"
 
 # artwork tabular data
 art_data <- read.delim("raw_data/artwork1.csv", colClasses = "character") # /t as separator
@@ -36,7 +36,7 @@ art_data <- art_data %>%
 
 # select necessary columns
 reduced_art <- art_data %>% 
-  filter(category == category) %>% 
+  filter(category == target_cat) %>% 
   select(opp, title, category, yearStart)
 
 # model loading
@@ -53,9 +53,9 @@ print("Completed loading models")
 # within-year batch size
 batch_size <- 75
 
-# input year range
-start_year <- 1914
-end_year <- 1920            
+# input year range (min = 1889, max = 1973)
+start_year <- 1972
+end_year <- 1973
 arg_year_range <- start_year:end_year
 
 # retrieve file names (may need to edit to subset years)
@@ -165,11 +165,11 @@ for (year in truc_yearlist) {
   
   low_features %>% 
     data.table() %>% 
-    fwrite(file.path(feature_dir, paste0("low_feature_", category, ".csv")), append = TRUE)
+    fwrite(file.path(feature_dir, paste0("low_feature_", target_cat, ".csv")), append = TRUE)
   
   high_features %>% 
     data.table() %>% 
-    fwrite(file.path(feature_dir, paste0("high_feature_", category, ".csv")), append = TRUE)
+    fwrite(file.path(feature_dir, paste0("high_feature_", target_cat, ".csv")), append = TRUE)
   
   # store current year
   track_list[["year"]] <- c(track_list[["year"]], year)
