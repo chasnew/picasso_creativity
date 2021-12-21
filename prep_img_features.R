@@ -69,8 +69,8 @@ reconstruct_fn <- function(opp_str) {
   return(paste0("yopp", substr(opp_str, 5, 6), "-", substr(opp_str, 8, 10), ".jpg"))
 }
 
-img_dir <- "~/Box/QuantifyingPicasso/data_from_OPP/OPP_images"
-feature_dir <- "~/Box/QuantifyingPicasso/data_from_OPP/image_features"
+img_dir <- "~/Library/Box-Box/QuantifyingPicasso/data_from_OPP/OPP_images"
+feature_dir <- "~/Library/Box-Box/QuantifyingPicasso/data_from_OPP/image_features"
 
 # track processed year and opp ids
 if (file.exists("track_list.Rdata")) {

@@ -131,7 +131,7 @@ sample_opps <- sample_paintings %>%
   pull(opp)
 
 # image path
-img_dir <- "~/Box/QuantifyingPicasso/data_from_OPP/OPP_images/"
+img_dir <- "~/Library/Box-Box/QuantifyingPicasso/data_from_OPP/OPP_images/"
 
 # reconstruct filename from OPP
 reconstruct_fn <- function(opp_str) {
@@ -192,7 +192,7 @@ reconstruct_fn <- function(opp_str) {
   return(paste0("yopp", substr(opp_str, 5, 6), "-", substr(opp_str, 8, 10), ".jpg"))
 }
 
-img_dir <- "~/Box/QuantifyingPicasso/data_from_OPP/OPP_images"
+img_dir <- "~/Library/Box-Box/QuantifyingPicasso/data_from_OPP/OPP_images"
 
 # enable local access to Box folders
 for (year in year_list) {
@@ -407,7 +407,8 @@ agg_tsne %>%
 
 # Complete image features
 ```{r}
-feature_path <- "/Users/chanuwasaswamenakul/Box/QuantifyingPicasso/data_from_OPP/image_features"
+# change path according to where the feature data are stored
+feature_path <- "/Users/chanuwasaswamenakul/Library/Box-Box/QuantifyingPicasso/data_from_OPP/image_features"
 target_cat <- "painting"
 
 low_features <- fread(file.path(feature_path, paste0("low_feature_", target_cat, ".csv"))) %>% 
