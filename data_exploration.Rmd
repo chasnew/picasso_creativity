@@ -8,10 +8,14 @@ output: html_notebook
 
 ```{r}
 library(tidyverse)
+library(data.table)
 library(lubridate)
 library(stringr)
 library(entropy)
 library(cowplot)
+library(ggrepel)
+
+picasso_path <- "/Users/chanuwasaswamenakul/Library/CloudStorage/Box-Box/QuantifyingPicasso"
 ```
 
 # Data loading
@@ -53,6 +57,41 @@ art_data <- art_data %>%
          dateStart = make_date(yearStart, monthStart_fix, dayStart_fix), # convert dateStart into date type
          yearMonthStart = yearStart + monthStart_fix/12 + dayStart_fix/365) %>% # convert date into year scale
   mutate(date_duration = dateEnd - dateStart)
+
+# select necessary columns
+reduced_art <- art_data %>% 
+  select(opp, title, category, monthStart, yearStart, yearMonthStart)
+
+paintings <- reduced_art %>% 
+  filter(category == "painting")
+
+# Set up non-overlapping windows
+annualBins <- 12 # 12 months
+windowSize <- 1/annualBins # window size on the year scale (1 month)
+
+# major artistic periods
+majorPeriodOnset <- tibble(period = c("Blue",
+                                      "Rose",
+                                      "Les Demoiselles d'Avignon",
+                                      "Horta de Hebra landscapes",
+                                      "Analytic Cubism",
+                                      "Synthetic Cubism",
+                                      "WW1 Start",
+                                      "Neoclassicism", 
+                                      "Surrealism\n(Mandoline et guitare)",
+                                      "Surrealism\n(Trois denseurs)"),
+                           yearMonthStart = c(1901,
+                                              1904, 
+                                              1907.583,
+                                              1909.750,
+                                              1912 + 9/12, # changed from 9/12
+                                              1912.5,
+                                              1914.5, 
+                                              1918, 
+                                              1924.583, 
+                                              1925+2/12)) %>% 
+  mutate(timeWindow = ceiling(yearMonthStart / windowSize) * windowSize,
+         onsetYear = floor(timeWindow))
 ```
 
 # Missingness
@@ -354,5 +393,194 @@ merge.ent %>%
   geom_line() +
   scale_color_discrete(labels = c("category", "location")) +
   theme_classic()
+```
+
+# Load PCA results
+```{r}
+feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
+target_cat <- "painting"
+
+full_df <- fread(file.path(feature_path, paste0("pca_", target_cat, ".csv"))) %>% 
+  as.data.frame()
+
+# Separate low-level and high-level features for analyses
+low_cols <- str_detect(colnames(full_df), "low")
+low_features <- full_df[low_cols]
+
+high_cols <- str_detect(colnames(full_df), "high")
+high_features <- full_df[high_cols]
+
+full_pc_cols <- str_detect(colnames(full_df), "pc")
+full_features <- full_df[full_pc_cols]
+```
+
+# Dimensionality reduction (tSNE)
+```{r}
+library(Rtsne)
+
+# t-SNE analysis
+low_tsne <- low_features %>% Rtsne(perplexity = 30, pca = FALSE)
+low_tsne <- low_tsne$Y %>% as.data.frame() %>% rename(low_tsne1 = "V1", low_tsne2 = "V2")
+
+high_tsne <- high_features %>% Rtsne(perplexity = 30, pca = FALSE)
+high_tsne <- high_tsne$Y %>% as.data.frame() %>% rename(high_tsne1 = "V1", high_tsne2 = "V2")
+
+full_tsne <- full_features %>% Rtsne(perplexity = 30, pca = FALSE)
+full_tsne <- full_tsne$Y %>% as.data.frame() %>% rename(full_tsne1 = "V1", full_tsne2 = "V2")
+
+full_df <- cbind(full_df, low_tsne, high_tsne, full_tsne)
+```
+
+# Dimensionality reduction visualization
+```{r}
+# PCA
+ggplot(data = full_df, aes(x = low_pc1, y = low_pc2, label = opp, color = yearMonthStart)) +
+  geom_point() +
+  # geom_text_repel(size = 2.5) +
+  scale_color_gradientn(colors = rainbow(7)) +
+  labs(title = "low-level PCA results") +
+  theme_classic()
+
+ggplot(data = full_df, aes(x = high_pc1, y = high_pc2, label = opp, color = yearMonthStart)) +
+  geom_point() +
+  # geom_text_repel(size = 2.5) +
+  scale_color_gradient2(midpoint = median(full_df$yearMonthStart), mid = "grey90") +
+  labs(title = "high-level PCA results") +
+  theme_classic()
+
+ggplot(data = full_df, aes(x = low_pc1, y = high_pc1, label = opp, color = yearMonthStart)) +
+  geom_point() +
+  # geom_text_repel(size = 2.5) +
+  scale_color_gradient2(midpoint = median(full_df$yearMonthStart), mid = "grey90") +
+  labs(title = "full PCA results") +
+  theme_classic()
+
+# t-SNE
+ggplot(data = full_df, aes(x = low_tsne1, y = low_tsne2, label = opp, color = yearMonthStart)) +
+  geom_point() +
+  # geom_text_repel(size = 2.5) +
+  scale_color_gradient2(midpoint = median(full_df$yearMonthStart), mid = "grey90") +
+  labs(title = "low-level tSNE results") +
+  theme_classic()
+
+ggplot(data = full_df, aes(x = high_tsne1, y = high_tsne2, label = opp, color = yearMonthStart)) +
+  geom_point() +
+  # geom_text_repel(size = 2.5) +
+  scale_color_gradient2(midpoint = median(full_df$yearMonthStart), mid = "grey90") +
+  labs(title = "high-level tSNE results") +
+  theme_classic()
+
+ggplot(data = full_df, aes(x = full_tsne1, y = full_tsne2, label = opp, color = yearMonthStart)) +
+  geom_point() +
+  # geom_text_repel(size = 2.5) +
+  scale_color_gradientn(colors = rainbow(7)) +
+  labs(title = "full tSNE results") +
+  theme_classic()
+
+# visualize a cluster across levels
+# clust1 <- full_df %>% 
+#   filter(full_tsne1 > 0, full_tsne1 < 6, full_tsne2 <-20) %>% 
+#   select(opp)
+#   
+# ggplot(data = full_df, aes(x = low_tsne1, y = low_tsne2, label = opp, color = opp %in% clust1$opp)) +
+#   geom_point() +
+#   labs(title = "low-level tSNE results") +
+#   theme_classic()
+# 
+# ggplot(data = full_df, aes(x = high_tsne1, y = high_tsne2, label = opp, color = opp %in% clust1$opp)) +
+#   geom_point() +
+#   labs(title = "high-level tSNE results") +
+#   theme_classic()
+
+# Artistic walk
+agg_tsne <- full_df %>% 
+  group_by(yearStart) %>% 
+  summarize(low_tsne1_m = mean(low_tsne1), low_tsne2_m = mean(low_tsne2),
+            high_tsne1_m = mean(high_tsne1), high_tsne2_m = mean(high_tsne2),
+            full_tsne1_m = mean(full_tsne1), full_tsne2_m = mean(full_tsne2))
+
+agg_tsne %>% 
+  ggplot(aes(x = low_tsne1_m, y = low_tsne2_m, color = yearStart)) +
+  geom_path() +
+  geom_point(aes(shape = yearStart > 1912)) +
+  scale_color_gradientn(colors = rainbow(7)) +
+  labs(title = "low tSNE results") +
+  theme_classic()
+
+agg_tsne %>% 
+  ggplot(aes(x = high_tsne1_m, y = high_tsne2_m, color = yearStart)) +
+  geom_path() +
+  geom_point(aes(shape = yearStart > 1912)) +
+  scale_color_gradientn(colors = rainbow(7)) +
+  labs(title = "high tSNE results") +
+  theme_classic()
+
+agg_tsne %>% 
+  ggplot(aes(x = full_tsne1_m, y = full_tsne2_m, color = yearStart)) +
+  geom_path() +
+  geom_point(aes(shape = yearStart > 1912)) +
+  scale_color_gradientn(colors = rainbow(7)) +
+  labs(title = "full tSNE results") +
+  theme_classic()
+```
+
+# Artistic style clustering
+```{r}
+library(cluster)
+
+# nstart: the number of initial random centroids to algorithmically solve for the best one
+# should test the robustness of centroid numbers (calculating within cluster variations)
+low_kmeans <- kmeans(low_features, centers = 200, iter.max = 100, nstart = 25)
+high_kmeans <- kmeans(high_features, centers = 200, iter.max = 100, nstart = 25)
+full_kmeans <- kmeans(full_features, centers = 200, iter.max = 100, nstart = 25)
+
+clust_df <- data.frame(low_clust = low_kmeans$cluster,
+                       high_clust = high_kmeans$cluster,
+                       full_clust = full_kmeans$cluster)
+
+full_df <- cbind(full_df, clust_df)
+
+# visualization
+## high-level feature clustering
+ggplot(data = full_df, aes(x = high_pc1, y = high_pc2, label = opp, color = high_clust)) +
+  geom_point() +
+  # geom_text_repel(size = 2.5) +
+  # scale_color_gradient2(midpoint = median(full_df$yearMonthStart), mid = "grey90") +
+  labs(title = "high-level PCA results") +
+  theme_classic()
+
+## full feature clustering
+ggplot(data = full_df, aes(x = low_pc1, y = high_pc1, label = opp, color = full_clust)) +
+  geom_point() +
+  # geom_text_repel(size = 2.5) +
+  labs(title = "full PCA results") +
+  theme_classic()
+
+# sample artworks from each cluster
+hclust_samples <- full_df %>%
+  group_by(high_clust) %>% 
+  slice_sample(n = 10)
+
+fclust_samples <- full_df %>% 
+  group_by(full_clust) %>% 
+  slice_sample(n = 10)
+
+# cluster sample visualization
+## high-level feature clustering
+ggplot(data = hclust_samples, aes(x = high_pc1, y = high_pc2, label = opp, color = high_clust)) +
+  geom_point() +
+  geom_text_repel(size = 2.5) +
+  # scale_color_gradient2(midpoint = median(full_df$yearMonthStart), mid = "grey90") +
+  labs(title = "high-level PCA results") +
+  theme_classic()
+
+## full feature clustering
+ggplot(data = fclust_samples, aes(x = low_pc1, y = high_pc1, label = opp, color = full_clust)) +
+  geom_point() +
+  geom_text_repel(size = 2.5) +
+  labs(title = "full PCA results") +
+  theme_classic()
+
+# within-month diversity/variation (need to check missing month)
 ```
 
