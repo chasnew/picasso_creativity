@@ -4,10 +4,11 @@ author: "Chanuwas (New) Aswamenakul"
 output: html_notebook
 ---
 
-# Importing libraries
+# Importing libraries & parameter setting
 
 ```{r}
 library(tidyverse)
+library(data.table)
 library(abind)
 library(lubridate)
 library(stringr)
@@ -16,6 +17,9 @@ library(tensorflow)
 library(keras)
 library(Rtsne)
 library(ggrepel)
+
+picasso_path <- "/Users/chanuwasaswamenakul/Library/CloudStorage/Box-Box/QuantifyingPicasso"
+target_cat <- "painting"
 ```
 
 # Data loading
@@ -67,10 +71,10 @@ art_data <- art_data %>%
 
 # select necessary columns
 reduced_art <- art_data %>% 
-  select(opp, title, category, yearStart, yearMonthStart)
+  select(opp, title, category, monthStart, yearStart, yearMonthStart)
 
 paintings <- reduced_art %>% 
-  filter(category == "painting")
+  filter(category == target_cat)
 
 # Set up non-overlapping windows
 annualBins <- 12 # 12 months
@@ -131,7 +135,7 @@ sample_opps <- sample_paintings %>%
   pull(opp)
 
 # image path
-img_dir <- "~/Library/Box-Box/QuantifyingPicasso/data_from_OPP/OPP_images/"
+img_dir <- file.path(picasso_path, "data_from_OPP/OPP_images/")
 
 # reconstruct filename from OPP
 reconstruct_fn <- function(opp_str) {
@@ -192,7 +196,7 @@ reconstruct_fn <- function(opp_str) {
   return(paste0("yopp", substr(opp_str, 5, 6), "-", substr(opp_str, 8, 10), ".jpg"))
 }
 
-img_dir <- "~/Library/Box-Box/QuantifyingPicasso/data_from_OPP/OPP_images"
+img_dir <- file.path(picasso_path, "data_from_OPP/OPP_images/")
 
 # enable local access to Box folders
 for (year in year_list) {
@@ -204,7 +208,7 @@ low_features <- c()
 high_features <- c()
 
 for (year in year_list) {
-  # constrctu file paths
+  # construct file paths
   sample_opps <- sample_paintings %>% 
     filter(yearStart == year) %>% 
     pull(opp)
@@ -247,169 +251,17 @@ high_features <- prcomp(high_features, center = TRUE, scale. = TRUE)$x[,1:100]
 colnames(high_features) <- paste0("high_pc", 1:100)
 
 # combine low-level and high-level features
-sample_features <- cbind(low_features, high_features)
+full_features <- cbind(low_features, high_features)
 
-# split samples into multiple batches/groups
-# img_n <- length(sample_images)
-# batch_size <- 10
-# n_batch <- floor(img_n/batch_size)
-# group_labels <- rep(1:n_batch, each = batch_size)
-# rem <- img_n %% batch_size
-# 
-# if (rem != 0) {
-#   group_labels <- c(group_labels, rep(n_batch+1, rem))
-#   n_batch = n_batch + 1
-# }
-# 
-# path_batches <- split(full_paths, f = group_labels)
-
-# extract features from each batch of images
-# low_features <- c()
-# high_features <- c()
-# sample_features <- c()
-# 
-# for (path_batch in path_batches) {
-#   x <- map(path_batch,
-#            ~image_load(.x, target_size = c(224,224), grayscale = FALSE) %>% 
-#              image_to_array() %>% 
-#              divide_by(255)
-#          ) # result in list
-#   x <- array(unlist(x), dim = c(224, 224, 3, length(x))) %>% # convert into an array
-#     aperm(c(4,1,2,3))
-#   
-#   feature.conv1 <- model.conv1 %>%
-#     predict(x) %>%
-#     rowMeans(dims = 2)
-#   feature.pool1 <- model.pool1 %>% 
-#     predict(x) %>% 
-#     rowMeans(dims = 2)
-#   feature.fc2 <- model.fc2 %>% 
-#     predict(x)
-#   
-#   low_features <- rbind(low_features, cbind(feature.conv1, feature.pool1))
-#   high_features <- rbind(high_features, feature.fc2)
-#   
-#   img_features <- cbind(feature.conv1, feature.pool1, feature.fc2)
-#   sample_features <- rbind(sample_features, img_features)
-# }
+full_df <- data.frame(opp = sample_paintings$opp, yearMonthStart = sample_paintings$yearMonthStart)
+full_df <- cbind(full_df, low_features[,1:2], high_features[,1:2])
+full_df$yearStart <- sample_paintings$yearStart
 ```
 
-# Dimensionality reduction
-```{r}
-sample_df <- data.frame(opp = sample_paintings$opp, yearMonthStart = sample_paintings$yearMonthStart)
-sample_df <- cbind(sample_df, low_features[,1:2], high_features[,1:2])
-sample_df$yearStart <- sample_paintings$yearStart
-
-# t-SNE analysis
-low_tsne <- low_features %>% Rtsne(perplexity = 30, pca = FALSE)
-low_tsne <- low_tsne$Y %>% as.data.frame() %>% rename(low_tsne1 = "V1", low_tsne2 = "V2")
-
-high_tsne <- high_features %>% Rtsne(perplexity = 30, pca = FALSE)
-high_tsne <- high_tsne$Y %>% as.data.frame() %>% rename(high_tsne1 = "V1", high_tsne2 = "V2")
-
-full_tsne <- sample_features %>% Rtsne(perplexity = 30, pca = FALSE)
-full_tsne <- full_tsne$Y %>% as.data.frame() %>% rename(full_tsne1 = "V1", full_tsne2 = "V2")
-
-sample_df <- cbind(sample_df, low_tsne, high_tsne, full_tsne)
-```
-# visualization
-```{r}
-# PCA
-ggplot(data = sample_df, aes(x = low_pc1, y = low_pc2, label = opp, color = yearMonthStart)) +
-  geom_point() +
-  # geom_text_repel(size = 2.5) +
-  scale_color_gradientn(colors = rainbow(7)) +
-  labs(title = "low-level PCA results") +
-  theme_classic()
-
-ggplot(data = sample_df, aes(x = high_pc1, y = high_pc2, label = opp, color = yearMonthStart)) +
-  geom_point() +
-  # geom_text_repel(size = 2.5) +
-  scale_color_gradient2(midpoint = median(sample_df$yearMonthStart), mid = "grey90") +
-  labs(title = "high-level PCA results") +
-  theme_classic()
-
-ggplot(data = sample_df, aes(x = low_pc1, y = high_pc1, label = opp, color = yearMonthStart)) +
-  geom_point() +
-  # geom_text_repel(size = 2.5) +
-  scale_color_gradient2(midpoint = median(sample_df$yearMonthStart), mid = "grey90") +
-  labs(title = "full PCA results") +
-  theme_classic()
-
-# t-SNE
-ggplot(data = sample_df, aes(x = low_tsne1, y = low_tsne2, label = opp, color = yearMonthStart)) +
-  geom_point() +
-  # geom_text_repel(size = 2.5) +
-  scale_color_gradient2(midpoint = median(sample_df$yearMonthStart), mid = "grey90") +
-  labs(title = "low-level tSNE results") +
-  theme_classic()
-
-ggplot(data = sample_df, aes(x = high_tsne1, y = high_tsne2, label = opp, color = yearMonthStart)) +
-  geom_point() +
-  # geom_text_repel(size = 2.5) +
-  scale_color_gradient2(midpoint = median(sample_df$yearMonthStart), mid = "grey90") +
-  labs(title = "high-level tSNE results") +
-  theme_classic()
-
-ggplot(data = sample_df, aes(x = full_tsne1, y = full_tsne2, label = opp, color = yearMonthStart)) +
-  geom_point() +
-  # geom_text_repel(size = 2.5) +
-  scale_color_gradientn(colors = rainbow(7)) +
-  labs(title = "full tSNE results") +
-  theme_classic()
-
-# visualize a cluster across levels
-clust1 <- sample_df %>% 
-  filter(full_tsne1 > 0, full_tsne1 < 6, full_tsne2 <-20) %>% 
-  select(opp)
-  
-ggplot(data = sample_df, aes(x = low_tsne1, y = low_tsne2, label = opp, color = opp %in% clust1$opp)) +
-  geom_point() +
-  labs(title = "low-level tSNE results") +
-  theme_classic()
-
-ggplot(data = sample_df, aes(x = high_tsne1, y = high_tsne2, label = opp, color = opp %in% clust1$opp)) +
-  geom_point() +
-  labs(title = "high-level tSNE results") +
-  theme_classic()
-
-# Artistic walk
-agg_tsne <- sample_df %>% 
-  group_by(yearStart) %>% 
-  summarize(low_tsne1_m = mean(low_tsne1), low_tsne2_m = mean(low_tsne2),
-            high_tsne1_m = mean(high_tsne1), high_tsne2_m = mean(high_tsne2),
-            full_tsne1_m = mean(full_tsne1), full_tsne2_m = mean(full_tsne2))
-
-agg_tsne %>% 
-  ggplot(aes(x = lowtsne1_m, y = lowtsne2_m, color = yearStart)) +
-  geom_path() +
-  geom_point(aes(shape = yearStart > 1912)) +
-  scale_color_gradientn(colors = rainbow(7)) +
-  labs(title = "low tSNE results") +
-  theme_classic()
-
-agg_tsne %>% 
-  ggplot(aes(x = hightsne1_m, y = hightsne2_m, color = yearStart)) +
-  geom_path() +
-  geom_point(aes(shape = yearStart > 1912)) +
-  scale_color_gradientn(colors = rainbow(7)) +
-  labs(title = "high tSNE results") +
-  theme_classic()
-
-agg_tsne %>% 
-  ggplot(aes(x = fulltsne1_m, y = fulltsne2_m, color = yearStart)) +
-  geom_path() +
-  geom_point(aes(shape = yearStart > 1912)) +
-  scale_color_gradientn(colors = rainbow(7)) +
-  labs(title = "full tSNE results") +
-  theme_classic()
-```
-
-# Complete image features
+# PCA on pre-processed image features
 ```{r}
 # change path according to where the feature data are stored
-feature_path <- "/Users/chanuwasaswamenakul/Library/Box-Box/QuantifyingPicasso/data_from_OPP/image_features"
-target_cat <- "painting"
+feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
 
 low_features <- fread(file.path(feature_path, paste0("low_feature_", target_cat, ".csv"))) %>% 
   as.data.frame()
@@ -433,17 +285,20 @@ full_features <- cbind(low_features, high_features)
 
 load("track_list.Rdata")
 
+# get the target category indices
 cat_opps <- reduced_art %>% 
   filter(category == target_cat) %>% 
   pull(opp)
 cat_filter <- track_list$opp %in% cat_opps
 
+# extract other features from the original dataset
 full_df <- data.frame(opp = track_list$opp[cat_filter]) %>% 
   left_join(reduced_art, by = "opp")
 full_df <- cbind(full_df, full_features)
 
-full_df %>% 
-  data.table() %>% 
+# save PCA results
+full_df %>%
+  data.table() %>%
   fwrite(file.path(feature_path, paste0("pca_", target_cat, ".csv")))
 ```
 
