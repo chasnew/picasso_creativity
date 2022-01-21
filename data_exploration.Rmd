@@ -15,7 +15,8 @@ library(entropy)
 library(cowplot)
 library(ggrepel)
 
-picasso_path <- "/Users/chanuwasaswamenakul/Library/CloudStorage/Box-Box/QuantifyingPicasso"
+home_dir <- path.expand("~")
+picasso_path <- file.path(home_dir, "Library/CloudStorage/Box-Box/QuantifyingPicasso")
 ```
 
 # Data loading
