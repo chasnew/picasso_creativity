@@ -121,6 +121,7 @@ model.pool1 <- keras_model(inputs = base_model$input,
 model.fc2 <- keras_model(inputs = base_model$input,
                          outputs = get_layer(base_model, 'fc2')$output)
 
+
 # sample images
 year_list <- paintings %>% 
   filter(yearStart >= 1900, yearStart <= 1970) %>% 
@@ -180,6 +181,23 @@ model.pool1 <- keras_model(inputs = base_model$input,
                            outputs = get_layer(base_model, 'block1_pool')$output)
 model.fc2 <- keras_model(inputs = base_model$input,
                          outputs = get_layer(base_model, 'fc2')$output)
+
+
+# resnet model
+base_model <- application_resnet50(weights = 'imagenet')
+# (None, 112, 112, 64)
+model.conv1 <- keras_model(inputs = base_model$input,
+                           outputs = get_layer(base_model, 'conv1_conv')$output)
+# (None, 56, 56, 64)
+model.pool1 <- keras_model(inputs = base_model$input,
+                           outputs = get_layer(base_model, 'pool1_pool')$output)
+# (None, 14, 14, 256)
+model.conv4 <- keras_model(inputs = base_model$input,
+                           outputs = get_layer(base_model, 'conv4_block1_1_conv')$output)
+# (None, 2048)
+model.avgpool <- keras_model(inputs = base_model$input,
+                             outputs = get_layer(base_model, 'avg_pool')$output)
+
 
 batch_size <- 30
 
@@ -275,10 +293,12 @@ nz_masks <- high_features %>%
 high_features <- high_features[,nz_masks]
 
 # PCA analysis for low-leven and high-level features
-low_features <- prcomp(low_features, center = TRUE, scale. = TRUE)$x[,1:100]
+low.pca.results <- prcomp(low_features, center = TRUE, scale. = TRUE)
+low_features <- low.pca.results$x[,1:100]
 colnames(low_features) <- paste0("low_pc", 1:100)
 
-high_features <- prcomp(high_features, center = TRUE, scale. = TRUE)$x[,1:100]
+high.pca.results <- prcomp(high_features, center = TRUE, scale. = TRUE)
+high_features <- high.pca.results$x[,1:100]
 colnames(high_features) <- paste0("high_pc", 1:100)
 
 # combine low-level and high-level features
@@ -301,5 +321,29 @@ full_df <- cbind(full_df, full_features)
 full_df %>%
   data.table() %>%
   fwrite(file.path(feature_path, paste0("pca_", target_cat, ".csv")))
+```
+
+```{r}
+# pca explained standard deviations
+ggplot() +
+  geom_point(aes(x = 1:336, y = low.pca.results$sdev)) +
+  geom_vline(xintercept = 100, color = "blue") +
+  xlab("pca dimension") +
+  ylab("explained sdev") +
+  labs(title = "low-level feature pca")
+
+ggplot() +
+  geom_point(aes(x = 1:3367, y = high.pca.results$sdev)) +
+  geom_vline(xintercept = 100, color = "blue") +
+  xlab("pca dimension") +
+  ylab("explained sdev") +
+  labs(title = "high-level feature pca")
+```
+
+```{r}
+pca_sd_list <- list(low_sd = low.pca.results$sdev,
+                    high_sd = high.pca.results$sdev)
+
+save(pca_sd_list, file = "pca_sd_list.Rdata")
 ```
 
