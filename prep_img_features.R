@@ -7,6 +7,7 @@ library(tensorflow)
 library(keras)
 
 target_cat <- "painting"
+feature_model <- "resnet"
 
 # artwork tabular data
 art_data <- read.delim("raw_data/artwork1.csv", colClasses = "character") # /t as separator
@@ -40,22 +41,40 @@ reduced_art <- art_data %>%
   select(opp, title, category, yearStart)
 
 # model loading
-base_model <- application_vgg16(weights = 'imagenet')
-# intermediate layers
-model.conv1 <- keras_model(inputs = base_model$input,
-                           outputs = get_layer(base_model, 'block1_conv1')$output)
-model.pool1 <- keras_model(inputs = base_model$input,
-                           outputs = get_layer(base_model, 'block1_pool')$output)
-model.fc2 <- keras_model(inputs = base_model$input,
-                         outputs = get_layer(base_model, 'fc2')$output)
+
+if (feature_model == "vgg") {
+  # vgg model
+  base_model <- application_vgg16(weights = 'imagenet')
+  # intermediate layers
+  model.conv1 <- keras_model(inputs = base_model$input,
+                             outputs = get_layer(base_model, 'block1_conv1')$output)
+  model.pool1 <- keras_model(inputs = base_model$input,
+                             outputs = get_layer(base_model, 'block1_pool')$output)
+  model.fc <- keras_model(inputs = base_model$input,
+                           outputs = get_layer(base_model, 'fc2')$output)
+} else if (feature_model == "resnet") {
+  # resnet model
+  base_model <- application_resnet50(weights = 'imagenet')
+  # (None, 112, 112, 64)
+  model.conv1 <- keras_model(inputs = base_model$input,
+                             outputs = get_layer(base_model, 'conv1_conv')$output)
+  # (None, 56, 56, 64)
+  model.pool1 <- keras_model(inputs = base_model$input,
+                             outputs = get_layer(base_model, 'pool1_pool')$output)
+  # (None, 2048)
+  model.fc <- keras_model(inputs = base_model$input,
+                               outputs = get_layer(base_model, 'avg_pool')$output)
+}
+
 print("Completed loading models")
+
 
 # within-year batch size
 batch_size <- 75
 
 # input year range (min = 1889, max = 1973)
-start_year <- 1972
-end_year <- 1973
+start_year <- 1900
+end_year <- 1920
 arg_year_range <- start_year:end_year
 
 # retrieve file names (may need to edit to subset years)
@@ -73,8 +92,9 @@ img_dir <- "~/Library/Box-Box/CloudStorage/QuantifyingPicasso/data_from_OPP/OPP_
 feature_dir <- "~/Library/Box-Box/CloudStorage/QuantifyingPicasso/data_from_OPP/image_features"
 
 # track processed year and opp ids
-if (file.exists("track_list.Rdata")) {
-  load("track_list.Rdata")
+trackl_name <- paste0("track_list_", target_cat, "_", feature_model, ".Rdata")
+if (file.exists(trackl_name)) {
+  load(trackl_name)
 } else {
   track_list <- list(year = c(), opp = c(), not_found = c())
 }
@@ -152,24 +172,24 @@ for (year in truc_yearlist) {
     feature.pool1 <- model.pool1 %>% 
       predict(x) %>% 
       rowMeans(dims = 2)
-    feature.fc2 <- model.fc2 %>% 
+    feature.fc <- model.fc %>% 
       predict(x)
     
     low_features <- rbind(low_features, cbind(feature.conv1, feature.pool1))
-    high_features <- rbind(high_features, feature.fc2)
+    high_features <- rbind(high_features, feature.fc)
   }
   
   # store features in Box folder as csv
-  colnames(low_features) <- paste0("low_f", 1:336)
-  colnames(high_features) <- paste0("high_f", 1:4096)
+  colnames(low_features) <- paste0("low_f", 1:dim(low_features)[2])
+  colnames(high_features) <- paste0("high_f", 1:dim(high_features)[2])
   
   low_features %>% 
     data.table() %>% 
-    fwrite(file.path(feature_dir, paste0("low_feature_", target_cat, ".csv")), append = TRUE)
+    fwrite(file.path(feature_dir, paste0("low_feature_", target_cat, "_", feature_model, ".csv")), append = TRUE)
   
   high_features %>% 
     data.table() %>% 
-    fwrite(file.path(feature_dir, paste0("high_feature_", target_cat, ".csv")), append = TRUE)
+    fwrite(file.path(feature_dir, paste0("high_feature_", target_cat, "_", feature_model, ".csv")), append = TRUE)
   
   # store current year
   track_list[["year"]] <- c(track_list[["year"]], year)
@@ -181,5 +201,5 @@ for (year in truc_yearlist) {
   track_list[["not_found"]] <- c(track_list[["not_found"]], not_found)
   
   # store processed year and opp ids
-  save(track_list, file = "track_list.Rdata")
+  save(track_list, file = trackl_name)
 }
