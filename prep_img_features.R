@@ -6,6 +6,8 @@ library(imager)
 library(tensorflow)
 library(keras)
 
+home_dir <- path.expand("~")
+picasso_path <- file.path(home_dir, "Library/CloudStorage/Box-Box/QuantifyingPicasso")
 target_cat <- "painting"
 feature_model <- "resnet"
 
@@ -73,8 +75,8 @@ print("Completed loading models")
 batch_size <- 75
 
 # input year range (min = 1889, max = 1973)
-start_year <- 1900
-end_year <- 1920
+start_year <- 1941
+end_year <- 1973
 arg_year_range <- start_year:end_year
 
 # retrieve file names (may need to edit to subset years)
@@ -88,8 +90,8 @@ reconstruct_fn <- function(opp_str) {
   return(paste0("yopp", substr(opp_str, 5, 6), "-", substr(opp_str, 8, 10), ".jpg"))
 }
 
-img_dir <- "~/Library/Box-Box/CloudStorage/QuantifyingPicasso/data_from_OPP/OPP_images"
-feature_dir <- "~/Library/Box-Box/CloudStorage/QuantifyingPicasso/data_from_OPP/image_features"
+img_dir <- file.path(picasso_path, "data_from_OPP", "OPP_images")
+feature_dir <- file.path(picasso_path, "data_from_OPP", "image_features")
 
 # track processed year and opp ids
 trackl_name <- paste0("track_list_", target_cat, "_", feature_model, ".Rdata")
