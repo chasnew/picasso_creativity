@@ -137,7 +137,7 @@ full_tsne <- full_tsne$Y %>% as.data.frame() %>% rename(full_tsne1 = "V1", full_
 full_df <- cbind(full_df, low_tsne, high_tsne, full_tsne)
 ```
 
-## Dimensionality reduction visualization
+## PCA-TSNE Visualization
 
 ```{r}
 # PCA
