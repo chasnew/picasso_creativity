@@ -99,6 +99,7 @@ majorPeriodOnset <- tibble(period = c("Blue",
          onsetYear = floor(timeWindow))
 ```
 
+
 # Load PCA results
 
 ```{r}
@@ -244,19 +245,20 @@ burstsen_results %>%
 
 ```{r movement analysis}
 ordered_df <- full_df %>% 
-  left_join(art_data %>% select(opp, dayStart),
+  left_join(art_data %>% select(opp, dayStart, dateStart),
             by = "opp") %>% 
   filter(monthStart != 0, dayStart != 0) %>% 
   arrange(yearStart, monthStart, dayStart) %>% 
-  select(yearStart, monthStart, low_pc1:high_pc100)
+  select(dateStart, low_pc1:high_pc100)
 
 
-# object-to-object movements
+# daily level movements
 d_ordered_pca <- ordered_df %>% 
-  select(contains("_pc"))
+  group_by(dateStart) %>% 
+  summarize(across(contains("_pc"), mean), .groups = "drop")
 
 trimmed_pca1 <- d_ordered_pca[-1,] # remove the first row
-trimmed_pca2 <- d_ordered_pca[-nrow(ordered_df),] # remove the last row
+trimmed_pca2 <- d_ordered_pca[-nrow(d_ordered_pca),] # remove the last row
 
 mvt_df <- trimmed_pca1 - trimmed_pca2
 
@@ -269,8 +271,8 @@ d_step_sizes <- mvt_df %>%
   sqrt()
 
 ## Directional changes (cosine similarity)
-trimmed_mvt1 <- mvt_df[-1,] # remove the first row
-trimmed_mvt2 <- mvt_df[-nrow(mvt_df),] # remove the last row
+trimmed_mvt1 <- mvt_df[-1,-1] # remove the first row
+trimmed_mvt2 <- mvt_df[-nrow(mvt_df),-1] # remove the last row
 
 dot_pca <- rowSums(trimmed_mvt1*trimmed_mvt2)
 size_product <- d_step_sizes[-1]*d_step_sizes[-length(d_step_sizes)]
@@ -279,9 +281,9 @@ d_cos_sims <- dot_pca/size_product
 
 # monthly level movements
 m_ordered_pca <- ordered_df %>% 
-  group_by(yearStart, monthStart) %>% 
-  summarize(across(contains("_pc"), mean)) %>% 
-  select(-yearStart, -monthStart)
+  group_by(year(dateStart), month(dateStart)) %>% 
+  summarize(across(contains("_pc"), mean), .groups = "drop") %>% 
+  select(-1, -2)
 
 trimmed_pca1 <- m_ordered_pca[-1,] # remove the first row
 trimmed_pca2 <- m_ordered_pca[-nrow(m_ordered_pca),] # remove the last row
@@ -307,9 +309,9 @@ m_cos_sims <- dot_pca/size_product
 
 # yearly level movements
 y_ordered_pca <- ordered_df %>% 
-  group_by(yearStart) %>% 
-  summarize(across(contains("_pc"), mean)) %>% 
-  select(-yearStart)
+  group_by(year(dateStart)) %>% 
+  summarize(across(contains("_pc"), mean), .groups = "drop") %>% 
+  select(-1)
 
 trimmed_pca1 <- y_ordered_pca[-1,] # remove the first row
 trimmed_pca2 <- y_ordered_pca[-nrow(y_ordered_pca),] # remove the last row
@@ -380,20 +382,35 @@ csd_plot / csm_plot / csy_plot
 ggsave(paste0("img/direct_change_dist_", feature_model, ".png"))
 ```
 
-
 ```{r}
-ordered_df$cos_sim <- c(NA, NA, d_cos_sims)
+d_ordered_pca$cos_sim <- c(NA, NA, d_cos_sims)
 
-ordered_df <- ordered_df %>% 
-  mutate(decadeStart = floor(yearStart/10)*10)
+d_ordered_pca <- d_ordered_pca %>% 
+  mutate(decadeStart = floor(year(dateStart)/10)*10)
 
-ordered_df %>% 
+d_ordered_pca %>% 
   ggplot(aes(x = cos_sim)) +
   facet_wrap(~decadeStart) +
   geom_density()
 
 ggplot(data = tibble(t = 1:length(d_cos_sims), d_cos_sims)) +
   geom_line(aes(x = t, y = d_cos_sims))
+```
+
+### Seasonality visualization
+
+```{r}
+mvt_dates <- d_ordered_pca %>% pull(dateStart)
+d_results <- data.frame(dateStart = mvt_dates[-length(mvt_dates)], step_size = d_step_sizes)
+d_results$cos_sim <- c(NA, d_cos_sims)
+
+d_results %>% 
+  ggplot(aes(x = dateStart, y = step_size)) +
+  geom_line()
+
+d_results %>% 
+  group_by(month(dateStart)) %>% 
+  summarize(avg_step = mean(step_size), avg_dir = mean(cos_sim))
 ```
 
 
@@ -502,6 +519,12 @@ write_csv(agg_results,
 ```
 
 ```{r}
+agg_results <- read_csv(file.path(picasso_path, "results", "mvt_coarsed_results.csv"))
+agg_results
+```
+
+
+```{r}
 agg_results %>% 
   ggplot(aes(x=window_size)) + 
   geom_line(aes(y=step_avg)) + 
@@ -536,6 +559,226 @@ agg_results %>%
   scale_y_continuous(limits=c(-1,1)) +
   theme_classic()
 ```
+
+
+## Step sizes at different intervals
+
+```{r}
+ordered_df <- full_df %>% 
+  left_join(art_data %>% select(opp, dayStart, dateStart),
+            by = "opp") %>% 
+  filter(yearStart >= 1900, monthStart != 0, dayStart != 0) %>% 
+  arrange(yearStart, monthStart, dayStart) %>% 
+  select(dateStart, low_pc1:high_pc100)
+
+
+first_date <- min(ordered_df$dateStart)
+last_date <- max(ordered_df$dateStart)
+
+# daily level movements
+d_ordered_pca <- ordered_df %>% 
+  group_by(dateStart) %>% 
+  summarize(across(contains("_pc"), mean), .groups = "drop") %>% 
+  complete(dateStart = seq(first_date, last_date, by = "1 day"))
+
+
+# interval_list <- c(1, 7, 14, 30, 60, 90, 120, 180, 365)
+interval_list <- seq(from = 1, to = 365*5, by = 1)
+result_list <- list(step_avg = c(),
+                    step_sd = c())
+
+for (interval in interval_list) {
+  df_nrow <- nrow(d_ordered_pca)
+  
+  trimmed_pca1 <- d_ordered_pca[-(1:interval),] # remove the first (interval) rows
+  trimmed_pca2 <- d_ordered_pca[-((df_nrow-interval+1):df_nrow),] # remove the last (interval) rows
+  
+  mvt_df <- trimmed_pca1 - trimmed_pca2
+  
+  ## Step sizes
+  d_step_sizes <- mvt_df %>% 
+    mutate(across(contains("_pc"), ~ . ^2)) %>% 
+    select(contains("_pc")) %>% 
+    rowSums() %>% 
+    as.vector() %>% 
+    sqrt()
+  
+  result_list$step_avg <- c(result_list$step_avg, mean(d_step_sizes, na.rm = T))
+  result_list$step_sd <- c(result_list$step_sd, sd(d_step_sizes, na.rm = T))
+}
+
+result_list$interval <- 1:length(result_list$step_avg)
+result_df <- data.frame(result_list)
+
+write_csv(result_df,
+          file.path(picasso_path, "results",
+                    "filtered_steps_diff_intervals.csv"))
+```
+
+
+```{r}
+result_df <- read_csv(file.path(picasso_path, "results", "filtered_steps_diff_intervals.csv"))
+
+ggplot(result_df, aes(x = interval, y = step_avg)) +
+  geom_point()
+
+ggsave(file.path("img", "filtered_interval_stepsize.png"))
+```
+
+### null model
+
+```{r}
+# Null results by permutating data based on dates
+
+d_ordered_pca <- full_df %>% 
+  left_join(art_data %>% select(opp, dayStart, dateStart),
+            by = "opp") %>% 
+  filter(yearStart >= 1900, monthStart != 0, dayStart != 0) %>% 
+  group_by(dateStart) %>% 
+  summarize(across(contains("_pc"), mean), .groups = "drop")
+
+first_date <- min(ordered_df$dateStart)
+last_date <- max(ordered_df$dateStart)
+
+# shuffle date column and arrange dataframe
+d_ordered_pca <- d_ordered_pca %>% 
+  mutate(dateStart = sample(dateStart)) %>% 
+  arrange(dateStart) %>% 
+  select(dateStart, low_pc1:high_pc100) %>% 
+  complete(dateStart = seq(first_date, last_date, by = "1 day"))
+
+# interval_list <- c(1, 7, 14, 30, 60, 90, 120, 180, 365)
+interval_list <- seq(from = 1, to = 365*5, by = 1)
+result_list <- list(step_avg = c(),
+                    step_sd = c())
+
+for (interval in interval_list) {
+  df_nrow <- nrow(d_ordered_pca)
+  
+  trimmed_pca1 <- d_ordered_pca[-(1:interval),] # remove the first (interval) rows
+  trimmed_pca2 <- d_ordered_pca[-((df_nrow-interval+1):df_nrow),] # remove the last (interval) rows
+  
+  mvt_df <- trimmed_pca1 - trimmed_pca2
+  
+  ## Step sizes
+  d_step_sizes <- mvt_df %>% 
+    mutate(across(contains("_pc"), ~ . ^2)) %>% 
+    select(contains("_pc")) %>% 
+    rowSums() %>% 
+    as.vector() %>% 
+    sqrt()
+  
+  result_list$step_avg <- c(result_list$step_avg, mean(d_step_sizes, na.rm = T))
+  result_list$step_sd <- c(result_list$step_sd, sd(d_step_sizes, na.rm = T))
+}
+
+result_list$interval <- interval_list
+null_result_df <- data.frame(result_list)
+
+write_csv(null_result_df,
+          file.path(picasso_path, "results",
+                    "filtered_null_steps_diff_intervals.csv"))
+```
+
+```{r}
+null_result_df <- read_csv(file.path(picasso_path, "results",
+                                     "filtered_null_steps_diff_intervals.csv"))
+
+ggplot(null_result_df, aes(x = interval, y = step_avg)) +
+  geom_point()
+  # geom_pointrange(aes(ymin = step_avg - step_sd, ymax = step_avg + step_sd)) +
+  # ylim(c(-15,60))
+
+ggsave(file.path("img", "filtered_null_interval_stepsize.png"))
+```
+
+```{r}
+result_df <- read_csv(file.path(picasso_path, "results",
+                                "filtered_steps_diff_intervals.csv"))
+
+null_result_df <- read_csv(file.path(picasso_path, "results",
+                                     "filtered_null_steps_diff_intervals.csv"))
+
+ggplot(result_df, aes(x = interval, y = step_avg)) +
+  geom_point() +
+  geom_point(data = null_result_df, color = "red")
+
+ggsave(file.path("img", "picasso_vs_null_interval_stepsize.png"))
+```
+
+### subset by decades
+
+```{r}
+ordered_df <- full_df %>% 
+  left_join(art_data %>% select(opp, dayStart, dateStart),
+            by = "opp") %>% 
+  filter(yearStart >= 1900, monthStart != 0, dayStart != 0) %>% 
+  arrange(yearStart, monthStart, dayStart) %>% 
+  select(dateStart, low_pc1:high_pc100)
+
+first_date <- min(ordered_df$dateStart)
+last_date <- max(ordered_df$dateStart)
+
+# daily level movements
+d_ordered_pca <- ordered_df %>% 
+  group_by(dateStart) %>% 
+  summarize(across(contains("_pc"), mean), .groups = "drop") %>% 
+  complete(dateStart = seq(first_date, last_date, by = "1 day")) %>% 
+  mutate(decade = year(dateStart) - (year(dateStart) %% 10))
+
+decade_list <- unique(d_ordered_pca$decade)
+result_list <- list()
+
+for (i in length(decade_list)) {
+  
+  interval_list <- seq(from = 1, to = 365, by = 1)
+  decade_result <- list(step_avg = c(),
+                        step_sd = c())
+  
+  decade_pca <- d_ordered_pca %>% 
+    filter(decade == decade_list[i])
+  
+  for (interval in interval_list) {
+    df_nrow <- nrow(decade_pca)
+    
+    trimmed_pca1 <- decade_pca[-(1:interval),] # remove the first (interval) rows
+    trimmed_pca2 <- decade_pca[-((df_nrow-interval+1):df_nrow),] # remove the last (interval) rows
+    
+    mvt_df <- trimmed_pca1 - trimmed_pca2
+    
+    ## Step sizes
+    d_step_sizes <- mvt_df %>% 
+      mutate(across(contains("_pc"), ~ . ^2)) %>% 
+      select(contains("_pc")) %>% 
+      rowSums() %>% 
+      as.vector() %>% 
+      sqrt()
+    
+    decade_result$step_avg <- c(decade_result$step_avg, mean(d_step_sizes, na.rm = T))
+    decade_result$step_sd <- c(decade_result$step_sd, sd(d_step_sizes, na.rm = T))
+  }
+  
+  decade_result$interval <- 1:length(decade_result$step_avg)
+  decade_df <- data.frame(decade_result) %>% 
+    mutate(decade = decade_list[i])
+  
+  result_list[[i]] <- decade_df
+}
+
+# bind_rows()
+
+# overlay the overall results with results by decade and color them
+# model location change as perturbation to picasso artistic trajectory (related to Alex Peterson)
+## quantify effects in step sizes
+```
+
+
+## Turn angle at different intervals
+### use 3 data points with fixed time intervals between each pair
+
+
+## Proportion of exploratory steps at different time scales
+
 
 
 ## Sliding window analyses
@@ -669,7 +912,7 @@ write_csv(slidw_df,
 
 
 ```{r}
-slidw_df <- read_csv(file.path(picasso_path, "results", "slide_window12m.csv"))
+slidw_df <- read_csv(file.path(picasso_path, "results", "slide_window6m.csv"))
 
 majorPeriodOnset <- majorPeriodOnset %>% 
   mutate(month = ceiling(12 * ((yearMonthStart+.001) - 
@@ -696,6 +939,7 @@ ccf(m_step_sizes, m_cos_sims)
 Trying to make sense of word CCF — maybe seasonality? 
 
 ```{r}
+# 1 month visualizations
 slidw_df %>% 
   ggplot(aes(x = start_date, y = step_avg)) +
   geom_point() +
@@ -780,10 +1024,11 @@ slidw_df %>%
   geom_vline(xintercept = majorPeriodOnset$start_date, linetype='dashed') +
   geom_label(data=majorPeriodOnset, aes(x=start_date, label=period, 
                                         color=period, y=step_avg+.6), alpha=.5) +
-  # scale_x_continuous("year (started)", breaks=seq(1800, 2000, 5)) +
   theme_minimal() +
   theme(legend.position = "none")
-  
+
+ggsave(file.path("img", "slidw_step_size.png"))
+
 slidw_df %>% 
   ggplot(aes(x = start_date, y = step_avg)) +
   geom_point() +
@@ -800,10 +1045,10 @@ slidw_df %>%
   geom_vline(xintercept = majorPeriodOnset$start_date, linetype='dashed') +
   geom_label(data=majorPeriodOnset, aes(x=start_date, label=period, 
                                         color=period, y=dir_avg+.2), alpha=.5) +
-  # scale_x_continuous("year (started)", breaks=seq(1800, 2000, 5)) +
-  # coord_cartesian(xlim = c(1898,1928)) +
   theme_minimal() +
   theme(legend.position = "none")
+
+ggsave(file.path("img", "slidw_dir_change.png"))
 
 slidw_df %>% 
   ggplot(aes(x = start_date, y = dir_avg)) +
@@ -811,7 +1056,6 @@ slidw_df %>%
   geom_vline(xintercept = majorPeriodOnset$start_date, linetype='dashed') +
   geom_label(data=majorPeriodOnset, aes(x=start_date, label=period, 
                                         color=period, y=dir_avg+.2), alpha=.5) +
-  # scale_x_continuous("year (started)", breaks=seq(1800, 2000, 5)) +
   coord_cartesian(xlim = c(ymd(18980101),ymd(19280101))) +
   theme_minimal() +
   theme(legend.position = "none")
@@ -822,9 +1066,10 @@ slidw_df %>%
   geom_vline(xintercept = majorPeriodOnset$start_date, linetype='dashed') +
   geom_label(data=majorPeriodOnset, aes(x=start_date, label=period, 
                                         color=period, y=step_burst1+.2), alpha=.5) +
-  # scale_x_continuous("year (started)", breaks=seq(1800, 2000, 5)) +
   theme_minimal() +
   theme(legend.position = "none")
+
+ggsave(file.path("img", "slidw_burstiness.png"))
 
 slidw_df %>% 
   ggplot(aes(x = start_date, y = step_burst1)) +
@@ -849,159 +1094,7 @@ slidw_df %>%
   theme(legend.position = "none")
 ```
 
-
-## Null model
-
-### Average coarse-graining
-```{r}
-# shuffle date column and arrange dataframe
-shuff_df <- full_df %>% 
-  left_join(art_data %>% select(opp, dayStart, dateStart),
-            by = "opp") %>% 
-  filter(monthStart != 0, dayStart != 0) %>% 
-  transform(dateStart = sample(dateStart)) %>% 
-  arrange(dateStart) %>% 
-  select(dateStart, low_pc1:high_pc100)
-
-shuff_df %>% head()
-
-# object-to-object movements
-d_ordered_pca <- shuff_df %>% 
-  select(contains("_pc"))
-
-trimmed_pca1 <- d_ordered_pca[-1,] # remove the first row
-trimmed_pca2 <- d_ordered_pca[-nrow(ordered_df),] # remove the last row
-
-mvt_df <- trimmed_pca1 - trimmed_pca2
-
-## Step sizes
-nd_step_sizes <- mvt_df %>% 
-  mutate(across(contains("_pc"), ~ . ^2)) %>% 
-  select(contains("_pc")) %>% 
-  rowSums() %>% 
-  as.vector() %>% 
-  sqrt()
-
-## Directional changes (cosine similarity)
-trimmed_mvt1 <- mvt_df[-1,] # remove the first row
-trimmed_mvt2 <- mvt_df[-nrow(mvt_df),] # remove the last row
-
-dot_pca <- rowSums(trimmed_mvt1*trimmed_mvt2)
-size_product <- nd_step_sizes[-1]*nd_step_sizes[-length(nd_step_sizes)]
-
-nd_cos_sims <- dot_pca/size_product
-
-# monthly level movements
-m_ordered_pca <- shuff_df %>% 
-  group_by(year(dateStart), month(dateStart)) %>% 
-  summarize(across(contains("_pc"), mean), .groups = "drop") %>% 
-  select(-1, -2)
-
-trimmed_pca1 <- m_ordered_pca[-1,] # remove the first row
-trimmed_pca2 <- m_ordered_pca[-nrow(m_ordered_pca),] # remove the last row
-
-mvt_df <- trimmed_pca1 - trimmed_pca2
-
-## Step sizes
-nm_step_sizes <- mvt_df %>% 
-  mutate(across(contains("_pc"), ~ . ^2)) %>% 
-  select(contains("_pc")) %>% 
-  rowSums() %>% 
-  as.vector() %>% 
-  sqrt()
-
-## Directional changes (cosine similarity)
-trimmed_mvt1 <- mvt_df[-1,] # remove the first row
-trimmed_mvt2 <- mvt_df[-nrow(mvt_df),] # remove the last row
-
-dot_pca <- rowSums(trimmed_mvt1*trimmed_mvt2)
-size_product <- nm_step_sizes[-1]*nm_step_sizes[-length(nm_step_sizes)]
-
-nm_cos_sims <- dot_pca/size_product
-
-# yearly level movements
-y_ordered_pca <- shuff_df %>% 
-  group_by(year(dateStart)) %>% 
-  summarize(across(contains("_pc"), mean), .groups = "drop") %>% 
-  select(-1)
-
-trimmed_pca1 <- y_ordered_pca[-1,] # remove the first row
-trimmed_pca2 <- y_ordered_pca[-nrow(y_ordered_pca),] # remove the last row
-
-mvt_df <- trimmed_pca1 - trimmed_pca2
-
-## Step sizes
-ny_step_sizes <- mvt_df %>% 
-  mutate(across(contains("_pc"), ~ . ^2)) %>% 
-  select(contains("_pc")) %>% 
-  rowSums() %>% 
-  as.vector() %>% 
-  sqrt()
-
-## Directional changes (cosine similarity)
-trimmed_mvt1 <- mvt_df[-1,] # remove the first row
-trimmed_mvt2 <- mvt_df[-nrow(mvt_df),] # remove the last row
-
-dot_pca <- rowSums(trimmed_mvt1*trimmed_mvt2)
-size_product <- ny_step_sizes[-1]*ny_step_sizes[-length(ny_step_sizes)]
-
-ny_cos_sims <- dot_pca/size_product
-
-
-# Visualizing step sizes
-ndstep_plot <- qplot(nd_step_sizes, bins = 100) +
-  xlim(c(0, 250)) +
-  labs(title = "daily-level step size") +
-  theme_minimal() +
-  theme(axis.title.x=element_blank()) 
-nmstep_plot <- qplot(nm_step_sizes, bins = 100) +
-  xlim(c(0, 250)) +
-  labs(title = "monthly-level step size") +
-  theme_minimal() +
-  theme(axis.title.x=element_blank()) 
-nystep_plot <- qplot(ny_step_sizes, bins = 100) +
-  xlab("euclidean distance") +
-  xlim(c(0, 250)) +
-  labs(title = "yearly-level step size") +
-  theme_minimal() +
-  theme(axis.title.x=element_blank()) 
-
-ndstep_plot / nmstep_plot / nystep_plot
-ggsave(paste0("img/step_size_dist_null.png"))
-
-
-# Visualizing cosine similarity
-ncsd_plot <- qplot(nd_cos_sims, bins = 100) +
-  xlim(c(-1, 1)) +
-  xlab("cosine similarity") +
-  labs(title = "daily-level directional change") +
-  theme_minimal() +
-  theme(axis.title.x=element_blank())
-ncsm_plot <- qplot(nm_cos_sims, bins = 100) +
-  xlim(c(-1, 1)) +
-  xlab("cosine similarity") +
-  labs(title = "monthly-level directional change") +
-  theme_minimal() +
-  theme(axis.title.x=element_blank())
-ncsy_plot <- qplot(ny_cos_sims, bins = 100) +
-  xlim(c(-1, 1)) +
-  xlab("cosine similarity") +
-  labs(title = "yearly-level directional change") +
-  theme_minimal() +
-  theme(axis.title.x=element_blank())
-
-ncsd_plot / ncsm_plot / ncsy_plot
-ggsave(paste0("img/direct_change_dist_null.png"))
-```
-
-```{r}
-acf(d_step_sizes, lag.max = 400)
-acf(nd_step_sizes, lag.max = 400)
-ccf(d_step_sizes, d_cos_sims)
-ccf(nd_step_sizes, nd_cos_sims)
-```
-
-### Sliding window analyses
+### Null sliding window
 
 ```{r, warning=FALSE}
 # shuffle date column and arrange dataframe
@@ -1169,6 +1262,8 @@ nslidw_df %>%
                                         color=period, y=step_avg+5), alpha=.5) +
   theme_minimal() +
   theme(legend.position = "none")
+
+ggsave(file.path("img", "nslidw_step_size.png"))
   
 nslidw_df %>% 
   ggplot(aes(x = start_date, y = step_avg)) +
@@ -1191,6 +1286,8 @@ nslidw_df %>%
   theme_minimal() +
   theme(legend.position = "none")
 
+ggsave(file.path("img", "nslidw_dir_change.png"))
+
 nslidw_df %>% 
   ggplot(aes(x = start_date, y = dir_avg)) +
   geom_point() +
@@ -1211,6 +1308,8 @@ nslidw_df %>%
   # scale_x_continuous("year (started)", breaks=seq(1800, 2000, 5)) +
   theme_minimal() +
   theme(legend.position = "none")
+
+ggsave(file.path("img", "nslidw_burstiness.png"))
 
 nslidw_df %>% 
   ggplot(aes(x = start_date, y = step_burst1)) +
@@ -1235,43 +1334,253 @@ nslidw_df %>%
   theme(legend.position = "none")
 ```
 
-### Bootstrapping
+
+
+## Null model
+
+### Average coarse-graining
+```{r}
+# shuffle date column and arrange dataframe
+shuff_df <- full_df %>% 
+  left_join(art_data %>% select(opp, dayStart, dateStart),
+            by = "opp") %>% 
+  filter(monthStart != 0, dayStart != 0) %>% 
+  transform(dateStart = sample(dateStart)) %>% 
+  arrange(dateStart) %>% 
+  select(dateStart, low_pc1:high_pc100)
+
+shuff_df %>% head()
+
+# object-to-object movements
+d_ordered_pca <- shuff_df %>% 
+  group_by(dateStart) %>% 
+  summarize(across(contains("_pc"), mean), .groups = "drop")
+
+trimmed_pca1 <- d_ordered_pca[-1,] # remove the first row
+trimmed_pca2 <- d_ordered_pca[-nrow(d_ordered_pca),] # remove the last row
+
+mvt_df <- trimmed_pca1 - trimmed_pca2
+
+## Step sizes
+nd_step_sizes <- mvt_df %>% 
+  mutate(across(contains("_pc"), ~ . ^2)) %>% 
+  select(contains("_pc")) %>% 
+  rowSums() %>% 
+  as.vector() %>% 
+  sqrt()
+
+## Directional changes (cosine similarity)
+trimmed_mvt1 <- mvt_df[-1,-1] # remove the first row
+trimmed_mvt2 <- mvt_df[-nrow(mvt_df),-1] # remove the last row
+
+dot_pca <- rowSums(trimmed_mvt1*trimmed_mvt2)
+size_product <- nd_step_sizes[-1]*nd_step_sizes[-length(nd_step_sizes)]
+
+nd_cos_sims <- dot_pca/size_product
+
+# monthly level movements
+m_ordered_pca <- shuff_df %>% 
+  group_by(year(dateStart), month(dateStart)) %>% 
+  summarize(across(contains("_pc"), mean), .groups = "drop") %>% 
+  select(-1, -2)
+
+trimmed_pca1 <- m_ordered_pca[-1,] # remove the first row
+trimmed_pca2 <- m_ordered_pca[-nrow(m_ordered_pca),] # remove the last row
+
+mvt_df <- trimmed_pca1 - trimmed_pca2
+
+## Step sizes
+nm_step_sizes <- mvt_df %>% 
+  mutate(across(contains("_pc"), ~ . ^2)) %>% 
+  select(contains("_pc")) %>% 
+  rowSums() %>% 
+  as.vector() %>% 
+  sqrt()
+
+## Directional changes (cosine similarity)
+trimmed_mvt1 <- mvt_df[-1,] # remove the first row
+trimmed_mvt2 <- mvt_df[-nrow(mvt_df),] # remove the last row
+
+dot_pca <- rowSums(trimmed_mvt1*trimmed_mvt2)
+size_product <- nm_step_sizes[-1]*nm_step_sizes[-length(nm_step_sizes)]
+
+nm_cos_sims <- dot_pca/size_product
+
+# yearly level movements
+y_ordered_pca <- shuff_df %>% 
+  group_by(year(dateStart)) %>% 
+  summarize(across(contains("_pc"), mean), .groups = "drop") %>% 
+  select(-1)
+
+trimmed_pca1 <- y_ordered_pca[-1,] # remove the first row
+trimmed_pca2 <- y_ordered_pca[-nrow(y_ordered_pca),] # remove the last row
+
+mvt_df <- trimmed_pca1 - trimmed_pca2
+
+## Step sizes
+ny_step_sizes <- mvt_df %>% 
+  mutate(across(contains("_pc"), ~ . ^2)) %>% 
+  select(contains("_pc")) %>% 
+  rowSums() %>% 
+  as.vector() %>% 
+  sqrt()
+
+## Directional changes (cosine similarity)
+trimmed_mvt1 <- mvt_df[-1,] # remove the first row
+trimmed_mvt2 <- mvt_df[-nrow(mvt_df),] # remove the last row
+
+dot_pca <- rowSums(trimmed_mvt1*trimmed_mvt2)
+size_product <- ny_step_sizes[-1]*ny_step_sizes[-length(ny_step_sizes)]
+
+ny_cos_sims <- dot_pca/size_product
+
+
+# Visualizing step sizes
+ndstep_plot <- qplot(nd_step_sizes, bins = 100) +
+  xlim(c(0, 250)) +
+  labs(title = "daily-level step size") +
+  theme_minimal() +
+  theme(axis.title.x=element_blank()) 
+nmstep_plot <- qplot(nm_step_sizes, bins = 100) +
+  xlim(c(0, 250)) +
+  labs(title = "monthly-level step size") +
+  theme_minimal() +
+  theme(axis.title.x=element_blank()) 
+nystep_plot <- qplot(ny_step_sizes, bins = 100) +
+  xlab("euclidean distance") +
+  xlim(c(0, 250)) +
+  labs(title = "yearly-level step size") +
+  theme_minimal() +
+  theme(axis.title.x=element_blank()) 
+
+ndstep_plot / nmstep_plot / nystep_plot
+ggsave(paste0("img/step_size_dist_null.png"))
+
+
+# Visualizing cosine similarity
+ncsd_plot <- qplot(nd_cos_sims, bins = 100) +
+  xlim(c(-1, 1)) +
+  xlab("cosine similarity") +
+  labs(title = "daily-level directional change") +
+  theme_minimal() +
+  theme(axis.title.x=element_blank())
+ncsm_plot <- qplot(nm_cos_sims, bins = 100) +
+  xlim(c(-1, 1)) +
+  xlab("cosine similarity") +
+  labs(title = "monthly-level directional change") +
+  theme_minimal() +
+  theme(axis.title.x=element_blank())
+ncsy_plot <- qplot(ny_cos_sims, bins = 100) +
+  xlim(c(-1, 1)) +
+  xlab("cosine similarity") +
+  labs(title = "yearly-level directional change") +
+  theme_minimal() +
+  theme(axis.title.x=element_blank())
+
+ncsd_plot / ncsm_plot / ncsy_plot
+ggsave(paste0("img/direct_change_dist_null.png"))
+```
+
+#### Comparing burstiness
 
 ```{r}
-# sd of mean vs mean of sd
-resample_nslidw <- bootstraps(nslidw_df[c(3,5)], times = 1000)
+agg_results <- read_csv(file.path(picasso_path, "results", "mvt_coarsed_results.csv"))
 
-# bootstrapping step sizes
-bootstp_stsz <- map_dbl(
-  resample_nslidw$splits,
-  function(split) {
-    steps <- as.data.frame(split) %>% 
-      filter(!is.na(step_avg)) %>% 
-      pull(step_avg)
-    mean(steps)
+nd_step_sizes
+```
+
+```{r}
+burst_df <- data.frame(date_diff = mvt_df$date_group)
+burst_df$bigstep <- detect_burst(step_sizes, thresh=step_thresh)
+step_iei <- extract_iei(burst_df)
+
+result_list$step_burst <- c(result_list$step_burst, burstiness(step_iei))
+```
+
+#### Comparing autocorr
+
+```{r}
+acf(d_step_sizes, lag.max = 400)
+acf(nd_step_sizes, lag.max = 400)
+ccf(d_step_sizes, d_cos_sims)
+ccf(nd_step_sizes, nd_cos_sims)
+```
+
+### Significant movements
+
+```{r}
+# calculate individual movements for bootstrapping
+shuff_df <- full_df %>% 
+  left_join(art_data %>% select(opp, dayStart, dateStart),
+            by = "opp") %>% 
+  filter(monthStart != 0, dayStart != 0) %>% 
+  transform(dateStart = sample(dateStart)) %>% 
+  arrange(dateStart) %>% 
+  select(dateStart, low_pc1:high_pc100)
+
+shuff_df %>% head()
+
+agg_pca <- shuff_df %>% 
+  group_by(dateStart) %>% 
+  summarize(across(contains("_pc"), mean))
+
+trimmed_pca1 <- agg_pca[-1,] # remove the first row
+trimmed_pca2 <- agg_pca[-nrow(agg_pca),] # remove the last row
+
+mvt_df <- trimmed_pca1 - trimmed_pca2
+
+## Step sizes
+nd_step_sizes <- mvt_df %>% 
+  mutate(across(contains("_pc"), ~ . ^2)) %>% 
+  select(contains("_pc")) %>% 
+  rowSums() %>% 
+  as.vector() %>% 
+  sqrt()
+
+## Directional changes (cosine similarity)
+trimmed_mvt1 <- mvt_df[-1,-1] # remove the first row
+trimmed_mvt2 <- mvt_df[-nrow(mvt_df),-1] # remove the last row
+
+dot_pca <- rowSums(trimmed_mvt1*trimmed_mvt2)
+size_product <- nd_step_sizes[-1]*nd_step_sizes[-length(nd_step_sizes)]
+
+nd_cos_sims <- as.vector(dot_pca/size_product)
+
+# Bootstrapping
+resample_nslidw <- bootstraps(nd_step_sizes, times = 10)
+bootstp_stsz <- sapply(1:1000, function(i) {
+    resample <- sample(nd_step_sizes, size = length(nd_step_sizes), replace = T)
+    return(mean(resample))
   }
 )
 
-mean(bootstp_stsz)
-
-# bootstrapping direction changes
-bootstp_dir <- map_dbl(
-  resample_nslidw$splits,
-  function(split) {
-    direct <- as.data.frame(split) %>% 
-      filter(!is.na(dir_avg)) %>% 
-      pull(dir_avg)
-    mean(direct)
-  }
-)
-
-mean(bootstp_dir)
+## bootstrap results are very narrow
+rect_tib <- tibble(low_conf = quantile(bootstp_stsz, probs = .025),
+                   upp_conf = quantile(bootstp_stsz, probs = .975))
 
 
-nslidw_df %>% 
-  ggplot(aes(x = start_date, y = step_avg)) +
-  geom_point() +
+# bootstrapped results
+ggplot() +
+  geom_point(data = nslidw_df, aes(x = start_date, y = step_avg)) +
   geom_hline(yintercept = mean(bootstp_stsz), color = "blue") +
+  geom_rect(data=rect_tib, aes(xmin = ymd(18920101), xmax = ymd(19740101),
+                               ymin = low_conf, ymax = upp_conf), alpha = .5) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+
+# mean and sd
+ggplot() +
+  geom_point(data = slidw_df, aes(x = start_date, y = step_avg)) +
+  geom_hline(yintercept = mean(bootstp_stsz), color = "blue") +
+  geom_rect(aes(xmin = ymd(18920101), xmax = ymd(19740101),
+                ymin = mean(nslidw_df$step_avg, na.rm = T) - (2*sd(nslidw_df$step_avg, na.rm = T)),
+                ymax = mean(nslidw_df$step_avg, na.rm = T) + (2*sd(nslidw_df$step_avg, na.rm = T))),
+            alpha = .5) +
+  geom_vline(data=majorPeriodOnset, aes(xintercept = start_date, color=period), linetype='dashed') +
+  geom_label(data=majorPeriodOnset, aes(x=start_date, label=period, 
+                                        color=period, y=step_avg*10+100), alpha=.5) +
+  # coord_cartesian(xlim = c(ymd(18980101),ymd(19280101))) +
   theme_minimal() +
   theme(legend.position = "none")
 ```
@@ -1312,3 +1621,21 @@ pairwise_df %>%
   left_join(full_df %>% select(opp, low_pc1:high_pc100), by = c("opp2" = "opp")) %>% 
   rename_with(function(col){paste0(col, "_y")}, low_pc1:high_pc100)
 ```
+
+
+# Stock data
+
+```{r}
+# some columns get mixed up by the description column
+auc_data <- read.delim("raw_data/auction1.csv") # /t as separatorauc_d
+
+library(stringr)
+
+# can't find upper and lower bounds data, probably due to mis-formatting
+auc_data %>% 
+  filter(estimateCurrency != "0", estimateLowerBound != "") %>% 
+  pull(estimateCurrency)
+
+auc_data %>% str()
+```
+
