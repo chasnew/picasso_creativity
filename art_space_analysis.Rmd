@@ -631,6 +631,7 @@ gg.12m <- foote_df %>%
   geom_point() + geom_vline(xintercept = majorPeriodOnset$date)
 
 gg.1m / gg.6m / gg.12m
+ggsave(file.path("img", "foote_novelty_compare.png"))
 ```
 
 # Foote novelty analyses
