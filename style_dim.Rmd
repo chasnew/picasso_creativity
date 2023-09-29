@@ -1,0 +1,164 @@
+---
+title: "Style dimensionality"
+author: "Chanuwas (New) Aswamenakul"
+date: '2023-09-28'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(data.table)
+library(lubridate)
+library(stringr)
+library(rsample)
+library(ggrepel)
+library(patchwork)
+
+home_dir <- path.expand("~")
+picasso_path <- file.path(home_dir, "Library/CloudStorage/Box-Box/QuantifyingPicasso")
+
+cbPalette <- c('#999999', '#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2', '#D55E00', '#CC79A7')
+```
+
+# Data loading
+
+```{r, warning=FALSE}
+art_data <- read.delim("raw_data/artwork1.csv", colClasses = "character") # /t as separator
+
+# parse out date, month, and year variables from existing columns
+art_data <- art_data %>% 
+  separate(dateEnd, c("yearEnd","monthEnd","dayEnd"), remove = FALSE) %>% 
+  separate(dateStart, c("yearStart","monthStart","dayStart"), remove = FALSE) %>% 
+  mutate(yearEnd = as.numeric(yearEnd),
+         monthEnd = as.numeric(monthEnd),
+         dayEnd = as.numeric(dayEnd),
+         yearStart = as.numeric(yearStart),
+         monthStart = as.numeric(monthStart),
+         dayStart = as.numeric(dayStart))
+
+# remove weird data (8 entries)
+art_data <- art_data %>%
+  filter(category != "25~26-March/1936") %>% # shifted column (fixable)
+  filter(category != "") %>% # empty rows
+  filter(yearEnd != 0) # 2 entries w/ missing end dates
+
+# number of years to finish
+art_data <- art_data %>%
+  mutate(yearDuration = yearEnd - yearStart)
+
+# fill months and dates
+art_data <- art_data %>% 
+  mutate(monthEnd_fix = case_when(monthEnd == 0 ~ 6.5,
+                                  TRUE ~ monthEnd),
+         dayEnd_fix = case_when(dayEnd == 0 ~ 15.5,
+                                  TRUE ~ dayEnd),
+         monthStart_fix = case_when(monthStart == 0 ~ 6.5,
+                                  TRUE ~ monthStart),
+         dayStart_fix = case_when(dayStart == 0 ~ 15.5,
+                                  TRUE ~ dayStart)) %>%
+  mutate(dateEnd = make_date(yearEnd, monthEnd_fix, dayEnd_fix), # convert dateEnd into date type
+         dateStart = make_date(yearStart, monthStart_fix, dayStart_fix), # convert dateStart into date type
+         yearMonthStart = yearStart + monthStart_fix/12 + dayStart_fix/365) %>% # convert date into year scale
+  mutate(date_duration = dateEnd - dateStart)
+
+# select necessary columns
+reduced_art <- art_data %>% 
+  select(opp, title, category, dayStart, monthStart, yearStart, yearMonthStart, dateStart)
+
+paintings <- reduced_art %>% 
+  filter(category == "painting")
+
+# Set up non-overlapping windows
+annualBins <- 12 # 12 months
+windowSize <- 1/annualBins # window size on the year scale (1 month)
+
+# major artistic periods
+majorPeriodOnset <- tibble(period = c("Blue",
+                                      "Rose",
+                                      "Les Demoiselles d'Avignon",
+                                      "Horta de Hebra landscapes",
+                                      "Analytic Cubism",
+                                      "Synthetic Cubism",
+                                      "WW1 Start",
+                                      "Neoclassicism", 
+                                      "Surrealism\n(Mandoline et guitare)",
+                                      "Surrealism\n(Trois denseurs)"),
+                           yearMonthStart = c(1901,
+                                              1904, 
+                                              1907.583,
+                                              1909.750,
+                                              1912 + 9/12, # changed from 9/12
+                                              1912.5,
+                                              1914.5, 
+                                              1918, 
+                                              1924.583, 
+                                              1925+2/12)) %>% 
+  mutate(timeWindow = ceiling(yearMonthStart / windowSize) * windowSize,
+         onsetYear = floor(timeWindow))
+```
+
+
+# Load PCA results
+
+```{r}
+feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
+target_cat <- "painting"
+feature_model <- "resnet"
+
+full_df <- fread(file.path(feature_path, paste0("pca_", target_cat, "_", feature_model, ".csv"))) %>% 
+  as.data.frame()
+
+# Separate low-level and high-level features for analyses
+low_cols <- str_detect(colnames(full_df), "low")
+low_features <- full_df[low_cols]
+
+high_cols <- str_detect(colnames(full_df), "high")
+high_features <- full_df[high_cols]
+
+full_pc_cols <- str_detect(colnames(full_df), "pc")
+full_features <- full_df[full_pc_cols]
+```
+
+# Style dimensionality over time
+
+```{r setup, include=FALSE}
+style_dim.df <- tibble()
+window_size <- 5
+step_size <- 1
+# yeari <- 1889 + window_size
+
+for(yeari in seq(min(full_df$yearStart) + window_size, 
+                 max(full_df$yearStart), step_size)){
+  full_df.subi <- full_df %>% 
+    filter(yearStart > yeari - window_size,
+           yearStart <= yeari) %>%
+    select(low_pc1:high_pc100)
+  
+  full_df.subi.pca <- prcomp(full_df.subi)
+  cum.sdev.prop <- cumsum(full_df.subi.pca$sdev/sum(full_df.subi.pca$sdev))
+  
+  style_dim90 <- sum((cum.sdev.prop < .90)) + 1
+  style_dim75 <- sum((cum.sdev.prop < .75)) + 1
+  style_dim50 <- sum((cum.sdev.prop < .50)) + 1
+  style_dim.df <- bind_rows(style_dim.df, 
+                            tibble(year = yeari,
+                                   dim50 = style_dim50,
+                                   dim75 = style_dim75,
+                                   dim90 = style_dim90))
+}
+
+style_dim.df
+```
+
+```{r}
+style_dim.df %>% 
+  pivot_longer(!year, names_to = "exp_sdev", values_to = "pca_count") %>% 
+  ggplot(aes(x=year, y=pca_count, color=exp_sdev)) +
+  geom_line() +
+  theme_classic()
+
+ggsave("img/explained_pca_sdev.png")
+```
+
