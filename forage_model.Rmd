@@ -1,0 +1,366 @@
+---
+title: "Foraging models"
+author: "Chanuwas (New) Aswamenakul"
+date: '2024-02-21'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(data.table)
+library(lubridate)
+library(stringr)
+library(rsample)
+library(ggrepel)
+library(patchwork)
+
+home_dir <- path.expand("~")
+picasso_path <- file.path(home_dir, "Library/CloudStorage/Box-Box/QuantifyingPicasso")
+
+cbPalette <- c('#999999', '#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2', '#D55E00', '#CC79A7')
+```
+
+# Data loading
+
+```{r, warning=FALSE}
+dims <- 20 # number of dimensions
+n_iter <- 1000
+
+# function to get the SD for each dimension over time
+expand_sd_fun <- function(dim = 1, t = 1, dim_scale = 1, k = 1/10) {
+  return(1/(1 + exp(-k*(t - (dim_scale*dim) - 50))))
+}
+
+contract_sd_fun <- function(dim = 1, t = 1, dim_scale = 1, k = 1/10) {
+  return(1 - (1/(1 + exp(-k*(t - (dim_scale*dim) - 50)))))
+}
+
+sd_harsh_fun <- function(t = 1, n_iter = 1000, num_switches = 3){
+  small_sd <- 0.1
+  case_when(t %% (n_iter/num_switches) < (n_iter/num_switches)/2 ~ small_sd,
+            TRUE ~ 1)}
+
+ARS_sd_fun <- approxfun(x = seq(1, n_iter+10, 10), sd_harsh_fun(seq(1, n_iter+10, 10)))
+
+```
+
+```{r}
+ARS_sd_fun <- function(t = 1) {
+  sd_list <- sd(1:n_iter)
+  
+  return(sd)
+}
+
+
+
+# takes 100 steps to for the curve to approach 1
+dim_scale <- (n_iter / dims) - (100 / dims) - 1
+
+t <- seq(1,n_iter,1)
+
+sd6 <- (sin(t/50) + 1)/2
+plot(t, sd6)
+
+sd0 <- expand_sd_fun(0, t, dim_scale)
+sd1 <- expand_sd_fun(10, t, dim_scale)
+sd2 <- expand_sd_fun(20, t, dim_scale)
+plot(t, sd0)
+plot(t, sd1)
+plot(t, sd2)
+
+sd3 <- contract_sd_fun(0, t, dim_scale)
+sd4 <- contract_sd_fun(10, t, dim_scale)
+sd5 <- contract_sd_fun(20, t, dim_scale)
+plot(t, sd3)
+plot(t, sd4)
+plot(t, sd5)
+```
+
+```{r}
+dims <- 20 # number of dimensions
+n_iter <- 1000
+
+# takes 100 steps to for the curve to approach 1
+dim_scale <- (n_iter / dims) - (100 / dims) - 1
+
+states <- data.frame(matrix(0, ncol = dims, nrow = 1))
+x <- paste0("dim", 1:dims)
+colnames(states) <- x
+
+states_norm <- data.frame(matrix(0, ncol = dims, nrow = 1))
+x <- paste0("dim", 1:dims)
+colnames(states) <- x
+
+mvt_df <- data.frame(matrix(0, ncol = dims, nrow = 1))
+colnames(mvt_df) <- x
+
+mvt_df_norm <- data.frame(matrix(0, ncol = dims, nrow = 1))
+colnames(mvt_df_norm) <- x
+
+state_i <- rep(0, dims)
+
+for (i in 1:n_iter) {
+  sd_vector <- c(1, sapply(X = 0:(dims-2), FUN = expand_sd_fun, t = i, dim_scale = dim_scale))
+  change_i <- mvtnorm::rmvnorm(1, mean = rep(0, dims), sigma = diag(sd_vector))[1:dims]
+  # Do we want to normalize change_i by some function F(sd_vector), so the magnitude of the changes isn't so dependent on the dimensionality of the change?
+  # e/g/. change_norm_i = change_i / mean(change_i)
+  change_i_norm <- change_i / sqrt(sum(sd_vector^2))
+  
+  state_iminus1 <- state_i
+  state_i <- state_iminus1 + change_i
+  state_i_norm <- state_iminus1 + change_i_norm
+  
+  #then store state and change vectors
+  mvt_df[i,] <- change_i
+  mvt_df_norm[i,] <- change_i_norm
+  states <- rbind(states, state_i)
+  states_norm <- rbind(states_norm, state_i_norm)
+}
+
+# Distribution of steps is just distribution of the size of the change vectors
+abs_step_sizes <- mvt_df %>%
+  mutate(across(contains("dim"), ~ . ^2)) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+abs_step_sizes_norm <- mvt_df_norm %>%
+  mutate(across(contains("dim"), ~ . ^2)) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+tibble(iter_i = 1:length(abs_step_sizes), step_size = abs_step_sizes) %>% 
+  ggplot(aes(x = iter_i, y = step_size)) +
+  geom_line() +
+  theme_minimal()
+
+tibble(iter_i = 1:length(abs_step_sizes), step_size = abs_step_sizes_norm) %>% 
+  ggplot(aes(x = iter_i, y = step_size)) +
+  geom_line() +
+  theme_minimal()
+```
+
+```{r}
+# Dimensionality is PCA on state vectors
+style_dim.df <- tibble()
+window_size <- 100
+step_size <- 1
+
+for(yeari in seq(1, n_iter-window_size, step_size)) {
+  states.subi <- states_norm[yeari:(yeari+window_size)-1,]
+  
+  states.subi.pca <- prcomp(states.subi)
+  cum.sdev.prop <- cumsum(states.subi.pca$sdev/sum(states.subi.pca$sdev))
+  
+  style_dim90 <- sum((cum.sdev.prop < .90)) + 1
+  style_dim75 <- sum((cum.sdev.prop < .75)) + 1
+  style_dim50 <- sum((cum.sdev.prop < .50)) + 1
+  style_dim.df <- bind_rows(style_dim.df, 
+                            tibble(year = yeari,
+                                   n = nrow(states.subi),
+                                   dim50 = style_dim50,
+                                   dim75 = style_dim75,
+                                   dim90 = style_dim90))
+  
+}
+
+style_dim.df %>% 
+  ggplot(aes(x=year, dim90)) +
+  geom_line()
+```
+
+```{r}
+dims <- 20 # number of dimensions
+n_iter <- 1000
+
+# takes 100 steps to for the curve to approach 1
+dim_scale <- (n_iter / dims) - (100 / dims) - 1
+
+states <- data.frame(matrix(0, ncol = dims, nrow = 1))
+x <- paste0("dim", 1:dims)
+colnames(states) <- x
+
+states_norm <- data.frame(matrix(0, ncol = dims, nrow = 1))
+x <- paste0("dim", 1:dims)
+colnames(states) <- x
+
+mvt_df <- data.frame(matrix(0, ncol = dims, nrow = 1))
+colnames(mvt_df) <- x
+
+mvt_df_norm <- data.frame(matrix(0, ncol = dims, nrow = 1))
+colnames(mvt_df_norm) <- x
+
+state_i <- rep(0, dims)
+
+for (i in 1:n_iter) {
+  sd_vector <- c(1, sapply(X = 0:(dims-2), FUN = contract_sd_fun, t = i, dim_scale = dim_scale))
+  change_i <- mvtnorm::rmvnorm(1, mean = rep(0, dims), sigma = diag(sd_vector))[1:dims]
+  # Do we want to normalize change_i by some function F(sd_vector), so the magnitude of the changes isn't so dependent on the dimensionality of the change?
+  # e/g/. change_norm_i = change_i / mean(change_i)
+  change_i_norm <- change_i / sqrt(sum(sd_vector^2))
+  
+  state_iminus1 <- state_i
+  state_i <- state_iminus1 + change_i
+  state_i_norm <- state_iminus1 + change_i_norm
+  
+  #then store state and change vectors
+  mvt_df[i,] <- change_i
+  mvt_df_norm[i,] <- change_i_norm
+  states <- rbind(states, state_i)
+  states_norm <- rbind(states_norm, state_i_norm)
+}
+
+# Distribution of steps is just distribution of the size of the change vectors
+abs_step_sizes <- mvt_df %>%
+  mutate(across(contains("dim"), ~ . ^2)) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+abs_step_sizes_norm <- mvt_df_norm %>%
+  mutate(across(contains("dim"), ~ . ^2)) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+tibble(iter_i = 1:length(abs_step_sizes), step_size = abs_step_sizes) %>% 
+  ggplot(aes(x = iter_i, y = step_size)) +
+  geom_line() +
+  theme_minimal()
+
+tibble(iter_i = 1:length(abs_step_sizes), step_size = abs_step_sizes_norm) %>% 
+  filter(iter_i > 100) %>% 
+  ggplot(aes(x = iter_i, y = step_size)) +
+  geom_line() +
+  theme_minimal()
+```
+
+
+```{r}
+# Dimensionality is PCA on state vectors
+style_dim.df <- tibble()
+window_size <- 100
+step_size <- 1
+
+for(yeari in seq(1, n_iter-window_size, step_size)) {
+  states.subi <- states_norm[yeari:(yeari+window_size)-1,]
+  
+  states.subi.pca <- prcomp(states.subi)
+  cum.sdev.prop <- cumsum(states.subi.pca$sdev/sum(states.subi.pca$sdev))
+  
+  style_dim90 <- sum((cum.sdev.prop < .90)) + 1
+  style_dim75 <- sum((cum.sdev.prop < .75)) + 1
+  style_dim50 <- sum((cum.sdev.prop < .50)) + 1
+  style_dim.df <- bind_rows(style_dim.df, 
+                            tibble(year = yeari,
+                                   n = nrow(states.subi),
+                                   dim50 = style_dim50,
+                                   dim75 = style_dim75,
+                                   dim90 = style_dim90))
+  
+}
+
+style_dim.df %>% 
+  ggplot(aes(x=year, dim90)) +
+  geom_line()
+```
+
+
+```{r}
+dims <- 20 # number of dimensions
+n_iter <- 1000
+
+# takes 100 steps to for the curve to approach 1
+dim_scale <- (n_iter / dims) - (100 / dims) - 1
+
+states <- data.frame(matrix(0, ncol = dims, nrow = 1))
+x <- paste0("dim", 1:dims)
+colnames(states) <- x
+
+states_norm <- data.frame(matrix(0, ncol = dims, nrow = 1))
+x <- paste0("dim", 1:dims)
+colnames(states) <- x
+
+mvt_df <- data.frame(matrix(0, ncol = dims, nrow = 1))
+colnames(mvt_df) <- x
+
+mvt_df_norm <- data.frame(matrix(0, ncol = dims, nrow = 1))
+colnames(mvt_df_norm) <- x
+
+state_i <- rep(0, dims)
+
+for (i in 1:n_iter) {
+  sd_vector <- c(rep(ARS_sd_fun(i), dims-1), 1)
+  change_i <- mvtnorm::rmvnorm(1, mean = rep(0, dims), sigma = diag(sd_vector))[1:dims]
+  # Do we want to normalize change_i by some function F(sd_vector), so the magnitude of the changes isn't so dependent on the dimensionality of the change?
+  # e/g/. change_norm_i = change_i / mean(change_i)
+  change_i_norm <- change_i / sqrt(sum(sd_vector^2))
+  
+  state_iminus1 <- state_i
+  state_i <- state_iminus1 + change_i
+  state_i_norm <- state_iminus1 + change_i_norm
+  
+  #then store state and change vectors
+  mvt_df[i,] <- change_i
+  mvt_df_norm[i,] <- change_i_norm
+  states <- rbind(states, state_i)
+  states_norm <- rbind(states_norm, state_i_norm)
+}
+
+# Distribution of steps is just distribution of the size of the change vectors
+abs_step_sizes <- mvt_df %>%
+  mutate(across(contains("dim"), ~ . ^2)) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+abs_step_sizes_norm <- mvt_df_norm %>%
+  mutate(across(contains("dim"), ~ . ^2)) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+tibble(iter_i = 1:length(abs_step_sizes), step_size = abs_step_sizes) %>% 
+  ggplot(aes(x = iter_i, y = step_size)) +
+  geom_line() +
+  theme_minimal()
+
+tibble(iter_i = 1:length(abs_step_sizes), step_size = abs_step_sizes_norm) %>% 
+  filter(iter_i > 100) %>% 
+  ggplot(aes(x = iter_i, y = step_size)) +
+  geom_line() +
+  theme_minimal()
+```
+
+
+```{r}
+# Dimensionality is PCA on state vectors
+style_dim.df <- tibble()
+window_size <- 100
+step_size <- 1
+
+for(yeari in seq(1, n_iter-window_size, step_size)) {
+  states.subi <- states_norm[yeari:(yeari+window_size)-1,]
+  
+  states.subi.pca <- prcomp(states.subi)
+  cum.sdev.prop <- cumsum(states.subi.pca$sdev/sum(states.subi.pca$sdev))
+  
+  style_dim90 <- sum((cum.sdev.prop < .90)) + 1
+  style_dim75 <- sum((cum.sdev.prop < .75)) + 1
+  style_dim50 <- sum((cum.sdev.prop < .50)) + 1
+  style_dim.df <- bind_rows(style_dim.df, 
+                            tibble(year = yeari,
+                                   n = nrow(states.subi),
+                                   dim50 = style_dim50,
+                                   dim75 = style_dim75,
+                                   dim90 = style_dim90))
+  
+}
+
+style_dim.df %>% 
+  ggplot(aes(x=year, dim90)) +
+  geom_line()
+```
