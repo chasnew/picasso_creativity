@@ -121,44 +121,231 @@ full_pc_cols <- str_detect(colnames(full_df), "pc")
 full_features <- full_df[full_pc_cols]
 ```
 
+
 # Style dimensionality over time
 
 ```{r setup, include=FALSE}
-style_dim.df <- tibble()
-window_size <- 5
-step_size <- 1
-# yeari <- 1889 + window_size
+ordered_df <- full_df %>% 
+  left_join(art_data %>% select(opp, dayStart, dateStart),
+            by = "opp") %>% 
+  filter(monthStart != 0, dayStart != 0) %>% 
+  arrange(yearStart, monthStart, dayStart) %>% 
+  select(dateStart, low_pc1:high_pc100)
 
-for(yeari in seq(min(full_df$yearStart) + window_size, 
-                 max(full_df$yearStart), step_size)){
-  full_df.subi <- full_df %>% 
-    filter(yearStart > yeari - window_size,
-           yearStart <= yeari) %>%
-    select(low_pc1:high_pc100)
+style_dim.df <- tibble()
+
+first_date <- ymd(18950101)
+last_date <- ymd(19720701)
+
+year_window <- 5
+
+window_size <- years(year_window)
+wstep_size <- months(1)
+
+wfirst_date <- first_date
+wlast_date <- first_date + window_size
+
+start_date_seq <- seq(first_date, last_date - window_size + months(1), by = "1 month")
+
+while (wlast_date <= last_date) {
+  print(paste("start date =", wfirst_date))
   
-  full_df.subi.pca <- prcomp(full_df.subi)
-  cum.sdev.prop <- cumsum(full_df.subi.pca$sdev/sum(full_df.subi.pca$sdev))
+  full_df.subi <- ordered_df %>% 
+    filter(dateStart >= wfirst_date, dateStart < wlast_date) %>% 
+    select(-dateStart)
   
-  style_dim90 <- sum((cum.sdev.prop < .90)) + 1
-  style_dim75 <- sum((cum.sdev.prop < .75)) + 1
-  style_dim50 <- sum((cum.sdev.prop < .50)) + 1
-  style_dim.df <- bind_rows(style_dim.df, 
-                            tibble(year = yeari,
-                                   dim50 = style_dim50,
-                                   dim75 = style_dim75,
-                                   dim90 = style_dim90))
+  print(paste("number of rows =", nrow(full_df.subi)))
+  if (nrow(full_df.subi) > 0) {
+    full_df.subi.pca <- prcomp(full_df.subi %>% slice_sample(n=50))
+    cum.sdev.prop <- cumsum(full_df.subi.pca$sdev/sum(full_df.subi.pca$sdev))
+    
+    style_dim90 <- sum((cum.sdev.prop < .90)) + 1
+    style_dim75 <- sum((cum.sdev.prop < .75)) + 1
+    style_dim50 <- sum((cum.sdev.prop < .50)) + 1
+    style_dim.df <- bind_rows(style_dim.df, 
+                              tibble(dateStart = wfirst_date,
+                                     n = nrow(full_df.subi),
+                                     dim50 = style_dim50,
+                                     dim75 = style_dim75,
+                                     dim90 = style_dim90))
+  } else {
+    style_dim.df <- bind_rows(style_dim.df, 
+                            tibble(dateStart = wfirst_date,
+                                   n = 0,
+                                   dim50 = 0,
+                                   dim75 = 0,
+                                   dim90 = 0))
+  }
+  
+  wfirst_date <- wfirst_date + wstep_size
+  wlast_date <- wlast_date + wstep_size
 }
 
-style_dim.df
+write_csv(style_dim.df,
+          file.path(picasso_path, "results",
+                    paste0("slide_window", year_window, "y_artdim1m.csv")))
+
+# style_dim.df %>% filter(n < 20)
+
+# window_size <- 1
+# step_size <- 1
+# 
+# for(yeari in seq(1895,max(full_df$yearStart), step_size)){
+#   full_df.subi <- full_df %>% 
+#     filter(yearStart > yeari - window_size,
+#            yearStart <= yeari) %>%
+#     select(low_pc1:high_pc100)
+#   
+#   full_df.subi.pca <- prcomp(full_df.subi %>% slice_sample(n=50))
+#   cum.sdev.prop <- cumsum(full_df.subi.pca$sdev/sum(full_df.subi.pca$sdev))
+#   
+#   style_dim90 <- sum((cum.sdev.prop < .90)) + 1
+#   style_dim75 <- sum((cum.sdev.prop < .75)) + 1
+#   style_dim50 <- sum((cum.sdev.prop < .50)) + 1
+#   style_dim.df <- bind_rows(style_dim.df, 
+#                             tibble(year = yeari,
+#                                    n = nrow(full_df.subi),
+#                                    dim50 = style_dim50,
+#                                    dim75 = style_dim75,
+#                                    dim90 = style_dim90))
+#   
+# }
 ```
 
 ```{r}
+# boostrapping average number of dimensions across lifetime
+dim_vector_baseline <- c()
+for(i in 1:1000) {
+  full_df.pca <- prcomp(full_df %>% select(low_pc1:high_pc100) %>% slice_sample(n=50))
+  cum.sdev.prop <- cumsum(full_df.pca$sdev/sum(full_df.pca$sdev))
+  style_dim90 <- sum((cum.sdev.prop < .90)) + 1
+  dim_vector_baseline <- c(dim_vector_baseline, style_dim90)
+}
+
+hist(dim_vector_baseline)
+```
+
+
+```{r}
+
+year_window <- 3
+style_dim.df <- read_csv(file.path(picasso_path, "results",
+                                   paste0("slide_window", year_window, "y_artdim1m.csv")))
+
+
 style_dim.df %>% 
-  pivot_longer(!year, names_to = "exp_sdev", values_to = "pca_count") %>% 
-  ggplot(aes(x=year, y=pca_count, color=exp_sdev)) +
+  select(-n) %>% 
+  pivot_longer(!dateStart, names_to = "exp_sdev", values_to = "pca_count") %>% 
+  ggplot(aes(x=dateStart, y=pca_count, color=exp_sdev)) +
   geom_line() +
   theme_classic()
 
 ggsave("img/explained_pca_sdev.png")
+
+style_dim.df %>% 
+  ggplot(aes(x=dateStart, y=dim90)) +
+  geom_line() +
+  ylim(0,35) +
+  theme_classic() +
+  geom_smooth(method="lm") +
+  geom_vline(data=majorPeriodOnset, aes(xintercept=yearMonthStart))
+
+ggsave(paste0("img/pca", year_window, "y_dim90_majorperiod.png"),
+       width = 12, height = 7)
+
+
+
+ma <- function(x, n = 5){stats::filter(x, rep(1 / n, n), sides = 1)}
+style_dim.df$dim90.ma <- style_dim.df$dim90 %>% ma(n = 10)
+
+style_dim.df %>% 
+  ggplot(aes(x=dateStart, y=dim90.ma)) +
+  geom_line() +
+  scale_y_continuous("Number of dimensions") +
+  xlab("Date") +
+  theme_classic() +
+  geom_smooth(method="lm") +
+  theme(text = element_text(size = 16),
+        axis.title.x = element_text(size = 16),
+        axis.title.y = element_text(size = 16))
+
+ggsave("img/pca1y_dim90ma_majorperiod.png", width = 12, height = 7)
+```
+
+
+```{r}
+slidw_df <- read_csv(file.path(picasso_path, "results",
+                               "slide_window1y_burst1m.csv"))
+
+step_dim_df <- slidw_df %>% 
+  select(start_date, cstep_avg) %>% 
+  filter(start_date >= "1895-01-01") %>% 
+  left_join(style_dim.df %>% select(dateStart, dim75, dim90),
+            by = join_by(start_date == dateStart))
+
+cor.test(step_dim_df$cstep_avg, step_dim_df$dim90)
+
+step_dim_df %>% 
+  ggplot(aes(x=cstep_avg, y=dim90)) +
+  geom_point() +
+  theme_classic()
+
+ggsave("img/cstep_dim90_scatter.png", width = 12, height = 7)
+```
+
+
+```{r}
+# analyzing slope of PCA growth for different window sizes
+window_size_list <- 2:10
+step_size <- 1
+style_dim.df <- tibble()
+
+for(window_size in window_size_list) {
+  print(window_size)
+  sample_size <- 100000
+  for(yeari in seq(1896,max(full_df$yearStart), step_size)){
+    full_df.subi <- full_df %>% 
+      filter(yearStart > yeari - window_size,
+             yearStart <= yeari) 
+    sample_sizei <- min(sample_size, nrow(full_df.subi))
+  }
+  
+  for(yeari in seq(1896,max(full_df$yearStart), step_size)){
+    full_df.subi <- full_df %>% 
+      filter(yearStart > yeari - window_size,
+             yearStart <= yeari) %>%
+      select(low_pc1:high_pc100)
+    
+    full_df.subi.pca <- prcomp(full_df.subi %>% slice_sample(n=sample_sizei))
+    cum.sdev.prop <- cumsum(full_df.subi.pca$sdev/sum(full_df.subi.pca$sdev))
+    
+    style_dim90 <- sum((cum.sdev.prop < .90)) + 1
+    style_dim75 <- sum((cum.sdev.prop < .75)) + 1
+    style_dim50 <- sum((cum.sdev.prop < .50)) + 1
+    
+    style_dim.df <- bind_rows(style_dim.df, 
+                              tibble(window_size = window_size, 
+                                     year = yeari,
+                                     n = nrow(full_df.subi),
+                                     sample_size = sample_sizei,
+                                     dim50 = style_dim50,
+                                     dim75 = style_dim75,
+                                     dim90 = style_dim90))
+    
+  }
+}
+
+
+style_dim.df.slopes <- style_dim.df %>% 
+  group_by(window_size) %>%
+  summarize(slope = summary(lm(dim90 ~ year))$coefficients["year","Estimate"])
+
+style_dim.df.slopes %>% 
+  ggplot(aes(x=window_size, y=slope)) +
+  geom_line() +
+  geom_point() +
+  theme_classic()
+
+ggsave("img/wsize_slope_dim.png", width = 12, height = 7)
 ```
 
