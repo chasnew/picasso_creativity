@@ -9,6 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 
 library(tidyverse)
+library(truncnorm)
 library(data.table)
 library(lubridate)
 library(stringr)
@@ -20,347 +21,1068 @@ home_dir <- path.expand("~")
 picasso_path <- file.path(home_dir, "Library/CloudStorage/Box-Box/QuantifyingPicasso")
 
 cbPalette <- c('#999999', '#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2', '#D55E00', '#CC79A7')
+
+set.seed(174)
 ```
 
-# Data loading
-
-```{r, warning=FALSE}
-dims <- 20 # number of dimensions
-n_iter <- 1000
-
-# function to get the SD for each dimension over time
-expand_sd_fun <- function(dim = 1, t = 1, dim_scale = 1, k = 1/10) {
-  return(1/(1 + exp(-k*(t - (dim_scale*dim) - 50))))
-}
-
-contract_sd_fun <- function(dim = 1, t = 1, dim_scale = 1, k = 1/10) {
-  return(1 - (1/(1 + exp(-k*(t - (dim_scale*dim) - 50)))))
-}
-
-sd_harsh_fun <- function(t = 1, n_iter = 1000, num_switches = 3){
-  small_sd <- 0.1
-  case_when(t %% (n_iter/num_switches) < (n_iter/num_switches)/2 ~ small_sd,
-            TRUE ~ 1)}
-
-ARS_sd_fun <- approxfun(x = seq(1, n_iter+10, 10), sd_harsh_fun(seq(1, n_iter+10, 10)))
-
-```
+# Load data for dates
 
 ```{r}
-ARS_sd_fun <- function(t = 1) {
-  sd_list <- sd(1:n_iter)
-  
-  return(sd)
+art_data <- read.delim("raw_data/artwork1.csv", colClasses = "character")
+
+# parse out date, month, and year variables from existing columns
+art_data <- art_data %>% 
+  separate(dateEnd, c("yearEnd","monthEnd","dayEnd"), remove = FALSE) %>% 
+  separate(dateStart, c("yearStart","monthStart","dayStart"), remove = FALSE) %>% 
+  mutate(yearEnd = as.numeric(yearEnd),
+         monthEnd = as.numeric(monthEnd),
+         dayEnd = as.numeric(dayEnd),
+         yearStart = as.numeric(yearStart),
+         monthStart = as.numeric(monthStart),
+         dayStart = as.numeric(dayStart))
+
+# remove weird data (8 entries)
+art_data <- art_data %>%
+  filter(category != "25~26-March/1936") %>% # shifted column (fixable)
+  filter(category != "") %>% # empty rows
+  filter(yearEnd != 0) # 2 entries w/ missing end dates
+
+# number of years to finish
+art_data <- art_data %>%
+  mutate(yearDuration = yearEnd - yearStart)
+
+# fill months and dates
+art_data <- art_data %>% 
+  mutate(monthEnd_fix = case_when(monthEnd == 0 ~ 6.5,
+                                  TRUE ~ monthEnd),
+         dayEnd_fix = case_when(dayEnd == 0 ~ 15.5,
+                                  TRUE ~ dayEnd),
+         monthStart_fix = case_when(monthStart == 0 ~ 6.5,
+                                  TRUE ~ monthStart),
+         dayStart_fix = case_when(dayStart == 0 ~ 15.5,
+                                  TRUE ~ dayStart)) %>%
+  mutate(dateEnd = make_date(yearEnd, monthEnd_fix, dayEnd_fix), # convert dateEnd into date type
+         dateStart = make_date(yearStart, monthStart_fix, dayStart_fix), # convert dateStart into date type
+         yearMonthStart = yearStart + monthStart_fix/12 + dayStart_fix/365) %>% # convert date into year scale
+  mutate(date_duration = dateEnd - dateStart)
+
+# select necessary columns
+reduced_art <- art_data %>% 
+  select(opp, title, category, dayStart, monthStart, yearStart, yearMonthStart, dateStart)
+
+paintings <- reduced_art %>% 
+  filter(category == "painting")
+
+exist_dates <- paintings %>% 
+  filter(dateStart > '1900-01-01') %>% 
+  arrange(dateStart) %>% 
+  pull(dateStart) %>% 
+  unique()
+
+first_date <- ymd(19000101)
+last_date <- ymd(19720701)
+
+date_num <- as.integer(last_date - first_date + 1)
+```
+
+
+# Movement Functions
+
+```{r, warning=FALSE}
+fixed_dims <- 20 # number of starting and fixed dimensions
+novel_dims <- 10 # number of novel dimensions
+n_iter <- length(exist_dates)
+
+# function to get the SD for each dimension over time
+
+# levy-walk-like foraging with an alternation between exploration and exploitation
+# sd_harsh_fun <- function(t = 1, n_iter = 1000, num_cycles = 3){
+#   small_sd <- 0.01
+#   case_when((t %% (n_iter/num_cycles)) < (n_iter/num_cycles)/2 ~ small_sd,
+#             TRUE ~ 1)}
+# 
+# ARS_sd_fun <- approxfun(x = seq(1, n_iter+50, 50),
+#                         sd_harsh_fun(seq(1, n_iter+50, 50),
+#                                      n_iter = n_iter, num_cycles = 50))
+
+ars_step_fun <- function(dim = 1, t = 1, n_iter = 1000, num_cycles = 3) {
+  search_param <- case_when(dim < 0 ~ 1,
+                            (t %% (n_iter/num_cycles)) < 
+                              (n_iter/num_cycles)/1.25 ~ 0,
+                            TRUE ~ 1)
+  step_size <- rtruncnorm(1, a=0, b=1, mean=search_param, sd=0.05)
+  direction <- ((-1)^rbinom(n=length(search_param), size=1, prob=0.5))
+  return(step_size * direction)
 }
 
+# increasingly constrictive foraging like experts
+# contract_sd_fun <- function(dim = 1, t = 1, dim_scale = 1, k = 1/10) {
+#   return(1 - (1/(1 + exp(-k*(t - (dim_scale*dim) - 50)))))
+# }
 
+constrict_step_fun <- function(dim = 1, t = 1, dim_scale = 1, k = 1/10) {
+  search_param <- case_when(dim < 0 ~ 1,
+                            TRUE ~ 1 - (1/(1 + exp(-k*(t - (dim_scale*dim))))))
+  step_size <- rtruncnorm(1, a=0, b=1, mean=search_param, sd=0.05)
+  direction <- ((-1)^rbinom(n=length(search_param), size=1, prob=0.5))
+  return(step_size * direction)
+}
 
-# takes 100 steps to for the curve to approach 1
-dim_scale <- (n_iter / dims) - (100 / dims) - 1
+# increasingly expansive foraging like Picasso
+# start off with more saturated dimensions (~25 dims)
+# newer dimensions (10 dims) fully saturated early (~1930)
+
+# expand_sd_fun <- function(dim = 1, t = 1, dim_scale = 1, k = 1/10) {
+#   return(1/(1 + exp(-k*(t - (dim_scale*dim) - 50))))
+# }
+
+expand_step_fun <- function(dim = 1, t = 1, dim_scale = 1, k = 1/10) {
+  search_param <- case_when(dim < 0 ~ 1,
+                            TRUE ~ 1/(1 + exp(-k*(t - (dim_scale*dim)))))
+  step_size <- rtruncnorm(1, a=0, b=1, mean=search_param, sd=0.05)
+  direction <- ((-1)^rbinom(n=length(search_param), size=1, prob=0.5))
+  return(step_size * direction)
+}
+
+source("mvt_analysis.R")
+```
+
+# Testing foraging patterns
+
+```{r}
+# ARS_sd_fun <- function(t = 1) {
+#   sd_list <- sd(1:n_iter)
+#   return(sd)
+# }
+
+# takes 100 steps to for the curve to approach max value
+# step size of the last dim starts increases at the last 1500 time steps
+dim_scale <- (n_iter / novel_dims) - (1800 / novel_dims) - 1
 
 t <- seq(1,n_iter,1)
 
-sd6 <- (sin(t/50) + 1)/2
-plot(t, sd6)
+step0 <- expand_step_fun(-1, t, dim_scale)
+step1 <- expand_step_fun(0, t, dim_scale)
+step2 <- expand_step_fun(10, t, dim_scale)
+plot(t, step0)
+plot(t, step1)
+plot(t, step2)
 
-sd0 <- expand_sd_fun(0, t, dim_scale)
-sd1 <- expand_sd_fun(10, t, dim_scale)
-sd2 <- expand_sd_fun(20, t, dim_scale)
-plot(t, sd0)
-plot(t, sd1)
-plot(t, sd2)
+step3 <- constrict_step_fun(0, t, dim_scale)
+step4 <- constrict_step_fun(1, t, dim_scale)
+step5 <- constrict_step_fun(10, t, dim_scale)
+plot(t, step3)
+plot(t, step4)
+plot(t, step5)
 
-sd3 <- contract_sd_fun(0, t, dim_scale)
-sd4 <- contract_sd_fun(10, t, dim_scale)
-sd5 <- contract_sd_fun(20, t, dim_scale)
-plot(t, sd3)
-plot(t, sd4)
-plot(t, sd5)
+
+ars_steps <- ars_step_fun(t = t, n_iter = n_iter, num_cycles = 40)
+tibble(t = t[1:300], step = ars_steps[1:300]) %>% 
+  mutate(abs_step = abs(step)) %>% 
+  ggplot(aes(x=t, y=abs_step)) +
+  geom_point() +
+  theme_classic()
+
+# ggsave("img/ars40switch_sample_steps.png", width = 12, height = 6)
 ```
 
+
+# Sliding window parameters
+
 ```{r}
-dims <- 20 # number of dimensions
-n_iter <- 1000
+# sliding window parameters
+year_window <- 5
 
-# takes 100 steps to for the curve to approach 1
-dim_scale <- (n_iter / dims) - (100 / dims) - 1
+window_size <- years(year_window)
+wstep_size <- months(1)
 
-states <- data.frame(matrix(0, ncol = dims, nrow = 1))
-x <- paste0("dim", 1:dims)
+start_date_seq <- seq(first_date, last_date - window_size + days(1), by = "1 month")
+
+all_dates <- seq(first_date, last_date, by = "1 day")
+burst_inds <- match(exist_dates, all_dates)
+
+date_burst <- rep(0, length(all_dates))
+date_burst[burst_inds] <- 1
+
+# tibble(t = all_dates, burst = date_burst) %>% 
+#   ggplot(aes(x = t, y = burst)) +
+#   geom_line() +
+#   theme_classic()
+# ggsave("img/date_missingness.png", width = 12, height = 6)
+```
+
+
+# Expansive search foraging
+## Simulation
+
+```{r}
+total_dims <- fixed_dims + novel_dims
+
+# takes 100 steps for the curve to approach 1
+dim_scale <- (n_iter / novel_dims) - (1800 / novel_dims) - 1
+
+# initialize the first state in style space
+state_i <- runif(total_dims, -1, 1)
+states <- data.frame(matrix(0, ncol = total_dims, nrow = 1))
+states[1,] <- state_i
+x <- paste0("dim", 1:total_dims)
 colnames(states) <- x
+t <- 2
 
-states_norm <- data.frame(matrix(0, ncol = dims, nrow = 1))
-x <- paste0("dim", 1:dims)
-colnames(states) <- x
-
-mvt_df <- data.frame(matrix(0, ncol = dims, nrow = 1))
-colnames(mvt_df) <- x
-
-mvt_df_norm <- data.frame(matrix(0, ncol = dims, nrow = 1))
-colnames(mvt_df_norm) <- x
-
-state_i <- rep(0, dims)
-
-for (i in 1:n_iter) {
-  sd_vector <- c(1, sapply(X = 0:(dims-2), FUN = expand_sd_fun, t = i, dim_scale = dim_scale))
-  change_i <- mvtnorm::rmvnorm(1, mean = rep(0, dims), sigma = diag(sd_vector))[1:dims]
+for (i in 2:length(exist_dates)) {
+  change_i <- expand_step_fun(c(rep(-1, fixed_dims), 1:novel_dims), t = t, dim_scale = dim_scale)
+  
+  # t <- as.integer(cur_date - first_date + 1)
+  # sd_vector <- c(1, sapply(X = 0:(dims-2), FUN = expand_sd_fun, t = t, dim_scale = dim_scale))
+  # change_i <- mvtnorm::rmvnorm(1, mean = rep(0, dims), sigma = diag(sd_vector^2))[1:dims]
   # Do we want to normalize change_i by some function F(sd_vector), so the magnitude of the changes isn't so dependent on the dimensionality of the change?
   # e/g/. change_norm_i = change_i / mean(change_i)
-  change_i_norm <- change_i / sqrt(sum(sd_vector^2))
   
   state_iminus1 <- state_i
   state_i <- state_iminus1 + change_i
-  state_i_norm <- state_iminus1 + change_i_norm
   
-  #then store state and change vectors
-  mvt_df[i,] <- change_i
-  mvt_df_norm[i,] <- change_i_norm
+  # clip the value of state_i by a set threshold (-1, 1)
+  state_i <- pmax(pmin(state_i, 1), -1)
+  
+  #then store state vectors
   states <- rbind(states, state_i)
-  states_norm <- rbind(states_norm, state_i_norm)
+  t <- t + 1
 }
 
+states$dateStart <- exist_dates
+states <- states %>%
+  select(dateStart, dim1:dim30)
+
+write_csv(states,
+          file.path(picasso_path, "results",
+                    paste0("expand_search_empi_states.csv")))
+
 # Distribution of steps is just distribution of the size of the change vectors
-abs_step_sizes <- mvt_df %>%
-  mutate(across(contains("dim"), ~ . ^2)) %>%
-  rowSums() %>%
-  as.vector() %>%
-  sqrt()
-
-abs_step_sizes_norm <- mvt_df_norm %>%
-  mutate(across(contains("dim"), ~ . ^2)) %>%
-  rowSums() %>%
-  as.vector() %>%
-  sqrt()
-
-tibble(iter_i = 1:length(abs_step_sizes), step_size = abs_step_sizes) %>% 
-  ggplot(aes(x = iter_i, y = step_size)) +
-  geom_line() +
-  theme_minimal()
-
-tibble(iter_i = 1:length(abs_step_sizes), step_size = abs_step_sizes_norm) %>% 
-  ggplot(aes(x = iter_i, y = step_size)) +
-  geom_line() +
-  theme_minimal()
+# mvt_df <- states[-1,] - states[-nrow(states),]
+# 
+# abs_step_sizes <- mvt_df %>%
+#   select(-dateStart) %>% 
+#   mutate(across(contains("dim"), ~ . ^2)) %>%
+#   rowSums() %>%
+#   as.vector() %>%
+#   sqrt()
+# 
+# # calculate cosine step size
+# centered_states <- states %>%
+#   mutate_all(~ scale(., scale = FALSE))
+# 
+# state_size <- states %>%
+#   select(-dateStart) %>% 
+#   mutate(across(contains("dim"), ~ . ^2)) %>%
+#   rowSums() %>%
+#   as.vector() %>%
+#   sqrt()
+# 
+# trimmed_state1 <- states[-1,] %>% select(-dateStart)
+# trimmed_state2 <- states[-nrow(states),] %>% select(-dateStart)
+# 
+# dot_pca <- rowSums(trimmed_state1*trimmed_state2) %>% as.vector()
+# size_product <- state_size[-1]*state_size[-length(state_size)]
+#   
+# cstep_sizes <- (1 - dot_pca/size_product)/2
+# 
+# exp_step_plot <- tibble(iter_i = 1:length(cstep_sizes),
+#                         step_size = cstep_sizes) %>% 
+#   ggplot(aes(x = iter_i, y = step_size)) +
+#   geom_line() +
+#   theme_classic()
+# 
+# exp_step_plot
+# ggsave("img/expand_cstepsizes.png", width = 12, height = 6)
+# 
+# states[1:50,] %>% 
+#   ggplot(aes(x = dim1, y = dim2)) +
+#   geom_point() +
+#   geom_path() +
+#   geom_hline(yintercept = 0) +
+#   geom_vline(xintercept = 0) +
+#   scale_x_continuous(limits=c(-1,1)) +
+#   scale_y_continuous(limits=c(-1,1)) +
+#   theme_classic()
+# ggsave("img/expand_2dstep50.png", width = 12, height = 6)
+# 
+# tibble(iter_i = 1:length(abs_step_sizes), step_size = abs_step_sizes_norm) %>% 
+#   ggplot(aes(x = iter_i, y = step_size)) +
+#   geom_line() +
+#   theme_minimal()
+# ggsave("img/expand_norm_stepsizes.png",  width = 12, height = 6)
 ```
 
-```{r}
-# Dimensionality is PCA on state vectors
-style_dim.df <- tibble()
-window_size <- 100
-step_size <- 1
+## Result visualization
 
-for(yeari in seq(1, n_iter-window_size, step_size)) {
-  states.subi <- states_norm[yeari:(yeari+window_size)-1,]
+```{r}
+states <- read_csv(file.path(picasso_path, "results",
+                             paste0("expand_search_empi_states.csv")))
+
+# Sliding window analysis on state vectors
+result_list <- list(cstep_avg = c(),
+                    dim90 = c(),
+                    loc_burst = c(),
+                    date_burst = c())
+
+wfirst_date <- first_date
+wlast_date <- first_date + window_size
+
+while (wlast_date <= last_date) {
+  print(paste("start date =", wfirst_date))
   
-  states.subi.pca <- prcomp(states.subi)
+  states.subi <- states %>% 
+    filter(dateStart >= wfirst_date, dateStart < wlast_date)
+  
+  # check if there's only one data point
+  if (nrow(states.subi) <= 1) {
+    result_list$cstep_avg <- c(result_list$cstep_avg, NA)
+    result_list$dim90 <- c(result_list$dim90, NA)
+    result_list$loc_burst <- c(result_list$loc_burst, NA)
+    result_list$date_burst <- c(result_list$date_burst, NA)
+    
+    wfirst_date <- wfirst_date + wstep_size
+    wlast_date <- wlast_date + wstep_size
+    next
+  }
+  
+  trimmed_pca1 <- states.subi[-1,] # remove the first row
+  trimmed_pca2 <- states.subi[-nrow(states.subi),] # remove the last row
+  
+  # movement vectors
+  mvt_df <- trimmed_pca1 - trimmed_pca2
+  
+  # Cosine step sizes
+  abs_step_sizes <- states.subi %>%
+    mutate(across(contains("dim"), ~ . ^2)) %>%
+    select(contains("dim")) %>%
+    rowSums() %>%
+    as.vector() %>%
+    sqrt()
+  
+  trimmed_pca1 <- trimmed_pca1 %>% select(-dateStart)
+  trimmed_pca2 <- trimmed_pca2 %>% select(-dateStart)
+  
+  dot_pca <- rowSums(trimmed_pca1*trimmed_pca2)
+  size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+  
+  cstep_sizes <- (1 - dot_pca/size_product)/2
+  
+  result_list$cstep_avg <- c(result_list$cstep_avg, mean(cstep_sizes))
+  
+  
+  # Dimensionality analysis
+  
+  states.subi.pca <- prcomp(states.subi %>% select(-dateStart))
   cum.sdev.prop <- cumsum(states.subi.pca$sdev/sum(states.subi.pca$sdev))
   
   style_dim90 <- sum((cum.sdev.prop < .90)) + 1
-  style_dim75 <- sum((cum.sdev.prop < .75)) + 1
-  style_dim50 <- sum((cum.sdev.prop < .50)) + 1
-  style_dim.df <- bind_rows(style_dim.df, 
-                            tibble(year = yeari,
-                                   n = nrow(states.subi),
-                                   dim50 = style_dim50,
-                                   dim75 = style_dim75,
-                                   dim90 = style_dim90))
   
+  result_list$dim90 <- c(result_list$dim90, style_dim90)
+  
+  
+  # only calculate if there are at least 2 movement vectors
+  if (nrow(mvt_df) > 1) {
+    # 0 bigsteps will be NA
+    # Burstiness
+    loc_threshold <- mean(cstep_sizes) + (1*sd(cstep_sizes))
+    
+    loc_bigstep <- detect_burst(cstep_sizes, thresh=loc_threshold, scale=F)
+    step_iei1 <- extract_iei(loc_bigstep)[-1]
+    
+    result_list$loc_burst <- c(result_list$loc_burst, burstiness(step_iei1))
+    
+    # date burstiness (days that Picasso started artworks)
+    avail_dates <- states.subi$dateStart
+    tmp_date_seq <- seq(wfirst_date, wlast_date - days(1), by = "1 day")
+    
+    burst_inds <- match(avail_dates, tmp_date_seq)
+    date_burst <- rep(0, length(tmp_date_seq))
+    date_burst[burst_inds] <- 1
+    
+    date_burst <- as.logical(date_burst)
+    date_iei <- extract_iei(date_burst)[-1]
+    
+    result_list$date_burst <- c(result_list$date_burst, burstiness(date_iei))
+    
+  } else {
+    result_list$loc_burst <- c(result_list$loc_burst, NA)
+    result_list$date_burst <- c(result_list$date_burst, NA)
+  }
+  
+  wfirst_date <- wfirst_date + wstep_size
+  wlast_date <- wlast_date + wstep_size
 }
 
-style_dim.df %>% 
-  ggplot(aes(x=year, dim90)) +
-  geom_line()
+slidw_df <- data.frame(result_list)
+slidw_df$start_date <- start_date_seq
+
+slidw_df <- slidw_df[,c(5,1:4)]
+
+write_csv(slidw_df,
+          file.path(picasso_path, "results",
+                    paste0("expand_search_empi_step_summary.csv")))
+
+exp_cstep_plot <- slidw_df %>% 
+  ggplot(aes(x=start_date, cstep_avg)) +
+  geom_line() +
+  theme_classic()
+
+exp_dim_plot <- slidw_df %>% 
+  ggplot(aes(x=start_date, dim90)) +
+  geom_line() +
+  theme_classic()
+
+exp_burst_plot <- slidw_df %>% 
+  ggplot(aes(x=start_date, loc_burst)) +
+  geom_line() +
+  theme_classic()
+
+exp_cstep_plot
+ggsave("img/expand_cstep.png", width = 12, height = 6)
+
+exp_dim_plot
+ggsave("img/expand_dim.png", width = 12, height = 6)
+
+exp_burst_plot
+ggsave("img/expand_burst.png", width = 12, height = 6)
 ```
 
+
+# Constrictive search foraging
+## Simulation
+
 ```{r}
-dims <- 20 # number of dimensions
-n_iter <- 1000
+total_dims <- fixed_dims + novel_dims
 
-# takes 100 steps to for the curve to approach 1
-dim_scale <- (n_iter / dims) - (100 / dims) - 1
+# takes 100 steps for the curve to approach 1
+dim_scale <- (n_iter / novel_dims) - (1800 / novel_dims) - 1
 
-states <- data.frame(matrix(0, ncol = dims, nrow = 1))
-x <- paste0("dim", 1:dims)
+state_i <- runif(total_dims, -1, 1)
+states <- data.frame(matrix(0, ncol = total_dims, nrow = 1))
+states[1,] <- state_i
+x <- paste0("dim", 1:total_dims)
 colnames(states) <- x
+t <- 2
 
-states_norm <- data.frame(matrix(0, ncol = dims, nrow = 1))
-x <- paste0("dim", 1:dims)
-colnames(states) <- x
-
-mvt_df <- data.frame(matrix(0, ncol = dims, nrow = 1))
-colnames(mvt_df) <- x
-
-mvt_df_norm <- data.frame(matrix(0, ncol = dims, nrow = 1))
-colnames(mvt_df_norm) <- x
-
-state_i <- rep(0, dims)
-
-for (i in 1:n_iter) {
-  sd_vector <- c(1, sapply(X = 0:(dims-2), FUN = contract_sd_fun, t = i, dim_scale = dim_scale))
-  change_i <- mvtnorm::rmvnorm(1, mean = rep(0, dims), sigma = diag(sd_vector))[1:dims]
+for (i in 2:length(exist_dates)) {
+  change_i <- constrict_step_fun(c(rep(-1, fixed_dims), 1:novel_dims), t = t, dim_scale = dim_scale)
+  
+  # t <- as.integer(cur_date - first_date + 1)
+  # sd_vector <- c(1, sapply(X = 0:(dims-2), FUN = contract_sd_fun, t = t, dim_scale = dim_scale))
+  # change_i <- mvtnorm::rmvnorm(1, mean = rep(0, dims), sigma = diag(sd_vector^2))[1:dims]
   # Do we want to normalize change_i by some function F(sd_vector), so the magnitude of the changes isn't so dependent on the dimensionality of the change?
   # e/g/. change_norm_i = change_i / mean(change_i)
-  change_i_norm <- change_i / sqrt(sum(sd_vector^2))
   
   state_iminus1 <- state_i
   state_i <- state_iminus1 + change_i
-  state_i_norm <- state_iminus1 + change_i_norm
   
-  #then store state and change vectors
-  mvt_df[i,] <- change_i
-  mvt_df_norm[i,] <- change_i_norm
+  # clip the value of state_i by a set threshold (-1, 1)
+  state_i <- pmax(pmin(state_i, 1), -1)
+  
+  #then store state vectors
   states <- rbind(states, state_i)
-  states_norm <- rbind(states_norm, state_i_norm)
+  t <- t + 1
 }
 
+states$dateStart <- exist_dates
+states <- states %>%
+  select(dateStart, dim1:dim30)
+
+write_csv(states,
+          file.path(picasso_path, "results",
+                    paste0("contract_search_empi_states.csv")))
+
 # Distribution of steps is just distribution of the size of the change vectors
-abs_step_sizes <- mvt_df %>%
-  mutate(across(contains("dim"), ~ . ^2)) %>%
-  rowSums() %>%
-  as.vector() %>%
-  sqrt()
-
-abs_step_sizes_norm <- mvt_df_norm %>%
-  mutate(across(contains("dim"), ~ . ^2)) %>%
-  rowSums() %>%
-  as.vector() %>%
-  sqrt()
-
-tibble(iter_i = 1:length(abs_step_sizes), step_size = abs_step_sizes) %>% 
-  ggplot(aes(x = iter_i, y = step_size)) +
-  geom_line() +
-  theme_minimal()
-
-tibble(iter_i = 1:length(abs_step_sizes), step_size = abs_step_sizes_norm) %>% 
-  filter(iter_i > 100) %>% 
-  ggplot(aes(x = iter_i, y = step_size)) +
-  geom_line() +
-  theme_minimal()
+# mvt_df <- states[-1,] - states[-nrow(states),]
+# 
+# abs_step_sizes <- mvt_df %>%
+#   mutate(across(contains("dim"), ~ . ^2)) %>%
+#   rowSums() %>%
+#   as.vector() %>%
+#   sqrt()
+# 
+# # calculate cosine step size
+# centered_states <- states %>%
+#   mutate_all(~ scale(., scale = FALSE))
+# 
+# state_size <- states %>%
+#   mutate(across(contains("dim"), ~ . ^2)) %>%
+#   rowSums() %>%
+#   as.vector() %>%
+#   sqrt()
+# 
+# trimmed_state1 <- states[-1,]
+# trimmed_state2 <- states[-nrow(states),]
+# 
+# dot_pca <- rowSums(trimmed_state1*trimmed_state2) %>% as.vector()
+# size_product <- state_size[-1]*state_size[-length(state_size)]
+#   
+# cstep_sizes <- (1 - dot_pca/size_product)/2
+# 
+# cont_step_plot <- tibble(iter_i = 1:length(cstep_sizes),
+#                         step_size = cstep_sizes) %>% 
+#   ggplot(aes(x = iter_i, y = step_size)) +
+#   geom_line() +
+#   theme_classic()
+# 
+# cont_step_plot
+# ggsave("img/contract_cstepsizes.png", width = 12, height = 6)
+# 
+# states %>% 
+#   ggplot(aes(x = dim1, y = dim2)) +
+#   geom_point() +
+#   geom_path() +
+#   geom_hline(yintercept = 0) +
+#   geom_vline(xintercept = 0) +
+#   theme_classic()
+# ggsave("img/contract_2dstep50.png", width = 12, height = 6)
+# 
+# tibble(iter_i = 1:length(abs_step_sizes), step_size = abs_step_sizes) %>% 
+#   ggplot(aes(x = iter_i, y = step_size)) +
+#   geom_line() +
+#   theme_minimal()
+# ggsave("img/contract_stepsizes.png",  width = 12, height = 6)
 ```
 
+## Result visualization
 
 ```{r}
-# Dimensionality is PCA on state vectors
-style_dim.df <- tibble()
-window_size <- 100
-step_size <- 1
+states <- read_csv(file.path(picasso_path, "results",
+                             paste0("contract_search_empi_states.csv")))
 
-for(yeari in seq(1, n_iter-window_size, step_size)) {
-  states.subi <- states_norm[yeari:(yeari+window_size)-1,]
+# Sliding window analysis on state vectors
+result_list <- list(cstep_avg = c(),
+                    dim90 = c(),
+                    loc_burst = c(),
+                    date_burst = c())
+
+wfirst_date <- first_date
+wlast_date <- first_date + window_size
+
+while (wlast_date <= last_date) {
+  print(paste("start date =", wfirst_date))
   
-  states.subi.pca <- prcomp(states.subi)
+  states.subi <- states %>% 
+    filter(dateStart >= wfirst_date, dateStart < wlast_date)
+  
+  # check if there's only one data point
+  if (nrow(states.subi) <= 1) {
+    result_list$cstep_avg <- c(result_list$cstep_avg, NA)
+    result_list$dim90 <- c(result_list$dim90, NA)
+    result_list$loc_burst <- c(result_list$loc_burst, NA)
+    result_list$date_burst <- c(result_list$date_burst, NA)
+    
+    wfirst_date <- wfirst_date + wstep_size
+    wlast_date <- wlast_date + wstep_size
+    next
+  }
+  
+  trimmed_pca1 <- states.subi[-1,] # remove the first row
+  trimmed_pca2 <- states.subi[-nrow(states.subi),] # remove the last row
+  
+  # movement vectors
+  mvt_df <- trimmed_pca1 - trimmed_pca2
+  
+  # Cosine step sizes
+  abs_step_sizes <- states.subi %>%
+    mutate(across(contains("dim"), ~ . ^2)) %>%
+    select(contains("dim")) %>%
+    rowSums() %>%
+    as.vector() %>%
+    sqrt()
+  
+  trimmed_pca1 <- trimmed_pca1 %>% select(-dateStart)
+  trimmed_pca2 <- trimmed_pca2 %>% select(-dateStart)
+  
+  dot_pca <- rowSums(trimmed_pca1*trimmed_pca2)
+  size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+  
+  cstep_sizes <- (1 - dot_pca/size_product)/2
+  
+  result_list$cstep_avg <- c(result_list$cstep_avg, mean(cstep_sizes))
+  
+  
+  # Dimensionality analysis
+  
+  states.subi.pca <- prcomp(states.subi %>% select(-dateStart))
   cum.sdev.prop <- cumsum(states.subi.pca$sdev/sum(states.subi.pca$sdev))
   
   style_dim90 <- sum((cum.sdev.prop < .90)) + 1
-  style_dim75 <- sum((cum.sdev.prop < .75)) + 1
-  style_dim50 <- sum((cum.sdev.prop < .50)) + 1
-  style_dim.df <- bind_rows(style_dim.df, 
-                            tibble(year = yeari,
-                                   n = nrow(states.subi),
-                                   dim50 = style_dim50,
-                                   dim75 = style_dim75,
-                                   dim90 = style_dim90))
   
+  result_list$dim90 <- c(result_list$dim90, style_dim90)
+  
+  
+  # only calculate if there are at least 2 movement vectors
+  if (nrow(mvt_df) > 1) {
+    # 0 bigsteps will be NA
+    # Burstiness
+    loc_threshold <- mean(cstep_sizes) + (1*sd(cstep_sizes))
+    
+    loc_bigstep <- detect_burst(cstep_sizes, thresh=loc_threshold, scale=F)
+    step_iei1 <- extract_iei(loc_bigstep)[-1]
+    
+    result_list$loc_burst <- c(result_list$loc_burst, burstiness(step_iei1))
+    
+    # date burstiness (days that Picasso started artworks)
+    avail_dates <- states.subi$dateStart
+    tmp_date_seq <- seq(wfirst_date, wlast_date - days(1), by = "1 day")
+    
+    burst_inds <- match(avail_dates, tmp_date_seq)
+    date_burst <- rep(0, length(tmp_date_seq))
+    date_burst[burst_inds] <- 1
+    
+    date_burst <- as.logical(date_burst)
+    date_iei <- extract_iei(date_burst)[-1]
+    
+    result_list$date_burst <- c(result_list$date_burst, burstiness(date_iei))
+    
+  } else {
+    result_list$loc_burst <- c(result_list$loc_burst, NA)
+    result_list$date_burst <- c(result_list$date_burst, NA)
+  }
+  
+  wfirst_date <- wfirst_date + wstep_size
+  wlast_date <- wlast_date + wstep_size
 }
 
-style_dim.df %>% 
-  ggplot(aes(x=year, dim90)) +
-  geom_line()
+slidw_df <- data.frame(result_list)
+slidw_df$start_date <- start_date_seq
+
+slidw_df <- slidw_df[,c(5,1:4)]
+
+write_csv(slidw_df,
+          file.path(picasso_path, "results",
+                    paste0("contract_search_empi_step_summary.csv")))
+
+
+cont_cstep_plot <- slidw_df %>% 
+  ggplot(aes(x=start_date, cstep_avg)) +
+  geom_line() +
+  theme_classic()
+
+cont_dim_plot <- slidw_df %>% 
+  ggplot(aes(x=start_date, dim90)) +
+  geom_line() +
+  theme_classic()
+
+cont_burst_plot <- slidw_df %>% 
+  ggplot(aes(x=start_date, loc_burst)) +
+  geom_line() +
+  theme_classic()
+
+cont_cstep_plot
+ggsave("img/contract_cstep.png", width = 12, height = 6)
+
+cont_dim_plot
+ggsave("img/contract_dim.png", width = 12, height = 6)
+
+cont_burst_plot
+ggsave("img/contract_burst.png", width = 12, height = 6)
 ```
 
+# Area-restricted search
+## Simulation
 
 ```{r}
-dims <- 20 # number of dimensions
-n_iter <- 1000
+total_dims <- fixed_dims + novel_dims
 
-# takes 100 steps to for the curve to approach 1
-dim_scale <- (n_iter / dims) - (100 / dims) - 1
-
-states <- data.frame(matrix(0, ncol = dims, nrow = 1))
-x <- paste0("dim", 1:dims)
+state_i <- runif(total_dims, -1, 1)
+states <- data.frame(matrix(0, ncol = total_dims, nrow = 1))
+states[1,] <- state_i
+x <- paste0("dim", 1:total_dims)
 colnames(states) <- x
+all_dates <- seq(first_date, last_date - days(1), by = "1 day")
+t <- 2
 
-states_norm <- data.frame(matrix(0, ncol = dims, nrow = 1))
-x <- paste0("dim", 1:dims)
-colnames(states) <- x
-
-mvt_df <- data.frame(matrix(0, ncol = dims, nrow = 1))
-colnames(mvt_df) <- x
-
-mvt_df_norm <- data.frame(matrix(0, ncol = dims, nrow = 1))
-colnames(mvt_df_norm) <- x
-
-state_i <- rep(0, dims)
-
-for (i in 1:n_iter) {
-  sd_vector <- c(rep(ARS_sd_fun(i), dims-1), 1)
-  change_i <- mvtnorm::rmvnorm(1, mean = rep(0, dims), sigma = diag(sd_vector))[1:dims]
+# 7 cycles seems like the best value
+# lower value washes out burstiness, higher values washes out cycles of step sizes
+for (i in 2:length(exist_dates)) {
+  change_i <- ars_step_fun(c(rep(-1, fixed_dims), rep(1, novel_dims)), t,
+                           n_iter = length(exist_dates),
+                           num_cycles = 40)
+  # change_i <- mvtnorm::rmvnorm(1, mean = rep(0, dims), sigma = diag(sd_vector^2))[1:dims]
   # Do we want to normalize change_i by some function F(sd_vector), so the magnitude of the changes isn't so dependent on the dimensionality of the change?
   # e/g/. change_norm_i = change_i / mean(change_i)
-  change_i_norm <- change_i / sqrt(sum(sd_vector^2))
   
   state_iminus1 <- state_i
   state_i <- state_iminus1 + change_i
-  state_i_norm <- state_iminus1 + change_i_norm
   
-  #then store state and change vectors
-  mvt_df[i,] <- change_i
-  mvt_df_norm[i,] <- change_i_norm
+  # clip the value of state_i by a set threshold (-1, 1)
+  state_i <- pmax(pmin(state_i, 1), -1)
+  
+  #then store state vectors
   states <- rbind(states, state_i)
-  states_norm <- rbind(states_norm, state_i_norm)
+  t <- t + 1
 }
 
+
+# states$dateStart <- exist_dates
+states$dateStart <- all_dates
+
+states <- states %>%
+  select(dateStart, dim1:dim30)
+
+write_csv(states,
+          file.path(picasso_path, "results",
+                    paste0("ars40switch_search_empi_states.csv")))
+
 # Distribution of steps is just distribution of the size of the change vectors
-abs_step_sizes <- mvt_df %>%
-  mutate(across(contains("dim"), ~ . ^2)) %>%
-  rowSums() %>%
-  as.vector() %>%
-  sqrt()
+# mvt_df <- states[-1,] - states[-nrow(states),]
+# 
+# abs_step_sizes <- mvt_df %>%
+#   mutate(across(contains("dim"), ~ . ^2)) %>%
+#   rowSums() %>%
+#   as.vector() %>%
+#   sqrt()
+# 
+# # calculate cosine step size
+# centered_states <- states %>%
+#   mutate_all(~ scale(., scale = FALSE))
+# 
+# state_size <- states %>%
+#   mutate(across(contains("dim"), ~ . ^2)) %>%
+#   rowSums() %>%
+#   as.vector() %>%
+#   sqrt()
+# 
+# trimmed_state1 <- states[-1,]
+# trimmed_state2 <- states[-nrow(states),]
+# 
+# dot_pca <- rowSums(trimmed_state1*trimmed_state2) %>% as.vector()
+# size_product <- state_size[-1]*state_size[-length(state_size)]
+#   
+# cstep_sizes <- (1 - dot_pca/size_product)/2
+# 
+# ars_step_plot <- tibble(iter_i = 1:length(cstep_sizes),
+#                         step_size = cstep_sizes) %>% 
+#   ggplot(aes(x = iter_i, y = step_size)) +
+#   geom_line() +
+#   theme_classic()
+# 
+# ars_step_plot
+# ggsave("img/ars_cstepsizes.png", width = 12, height = 6)
+# 
+states[1:200,] %>%
+  ggplot(aes(x = dim1, y = dim2)) +
+  geom_point() +
+  geom_path() +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  theme_classic()
+# ggsave("img/ars_2dstep50.png", width = 12, height = 6)
+# 
+# tibble(iter_i = 1:length(abs_step_sizes), step_size = abs_step_sizes) %>% 
+#   ggplot(aes(x = iter_i, y = step_size)) +
+#   geom_line() +
+#   theme_minimal()
+# ggsave("img/ars_stepsizes.png",  width = 12, height = 6)
+```
 
-abs_step_sizes_norm <- mvt_df_norm %>%
-  mutate(across(contains("dim"), ~ . ^2)) %>%
-  rowSums() %>%
-  as.vector() %>%
-  sqrt()
+## Result visualization
 
-tibble(iter_i = 1:length(abs_step_sizes), step_size = abs_step_sizes) %>% 
-  ggplot(aes(x = iter_i, y = step_size)) +
+```{r}
+# states <- read_csv(file.path(picasso_path, "results",
+#                     paste0("ars40switch_search_empi_states.csv")))
+
+# Sliding window analysis on state vectors
+result_list <- list(cstep_avg = c(),
+                    dim90 = c(),
+                    loc_burst = c(),
+                    date_burst = c())
+
+wfirst_date <- first_date
+wlast_date <- first_date + window_size
+
+# tmp_lastdate <- states$dateStart[nrow(states)]
+
+while (wlast_date <= last_date) {
+  print(paste("start date =", wfirst_date))
+  
+  states.subi <- states %>% 
+    filter(dateStart >= wfirst_date, dateStart < wlast_date)
+  
+  # check if there's only one data point
+  if (nrow(states.subi) <= 1) {
+    result_list$cstep_avg <- c(result_list$cstep_avg, NA)
+    result_list$dim90 <- c(result_list$dim90, NA)
+    result_list$loc_burst <- c(result_list$loc_burst, NA)
+    result_list$date_burst <- c(result_list$date_burst, NA)
+    
+    wfirst_date <- wfirst_date + wstep_size
+    wlast_date <- wlast_date + wstep_size
+    next
+  }
+  
+  trimmed_pca1 <- states.subi[-1,] # remove the first row
+  trimmed_pca2 <- states.subi[-nrow(states.subi),] # remove the last row
+  
+  # movement vectors
+  mvt_df <- trimmed_pca1 - trimmed_pca2
+  
+  # Cosine step sizes
+  abs_step_sizes <- states.subi %>%
+    mutate(across(contains("dim"), ~ . ^2)) %>%
+    select(contains("dim")) %>%
+    rowSums() %>%
+    as.vector() %>%
+    sqrt()
+  
+  trimmed_pca1 <- trimmed_pca1 %>% select(-dateStart)
+  trimmed_pca2 <- trimmed_pca2 %>% select(-dateStart)
+  
+  dot_pca <- rowSums(trimmed_pca1*trimmed_pca2)
+  size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+  
+  cstep_sizes <- (1 - dot_pca/size_product)/2
+  
+  result_list$cstep_avg <- c(result_list$cstep_avg, mean(cstep_sizes))
+  
+  
+  # Dimensionality analysis
+  
+  states.subi.pca <- prcomp(states.subi %>% select(-dateStart))
+  cum.sdev.prop <- cumsum(states.subi.pca$sdev/sum(states.subi.pca$sdev))
+  
+  style_dim90 <- sum((cum.sdev.prop < .90)) + 1
+  
+  result_list$dim90 <- c(result_list$dim90, style_dim90)
+  
+  
+  # only calculate if there are at least 2 movement vectors
+  if (nrow(mvt_df) > 1) {
+    # 0 bigsteps will be NA
+    # Burstiness
+    loc_threshold <- mean(cstep_sizes) + (1*sd(cstep_sizes))
+    
+    loc_bigstep <- detect_burst(cstep_sizes, thresh=loc_threshold, scale=F)
+    step_iei1 <- extract_iei(loc_bigstep)[-1]
+    
+    result_list$loc_burst <- c(result_list$loc_burst, burstiness(step_iei1))
+    
+    # date burstiness (days that Picasso started artworks)
+    avail_dates <- states.subi$dateStart
+    tmp_date_seq <- seq(wfirst_date, wlast_date - days(1), by = "1 day")
+    
+    burst_inds <- match(avail_dates, tmp_date_seq)
+    date_burst <- rep(0, length(tmp_date_seq))
+    date_burst[burst_inds] <- 1
+    
+    date_burst <- as.logical(date_burst)
+    date_iei <- extract_iei(date_burst)[-1]
+    
+    result_list$date_burst <- c(result_list$date_burst, burstiness(date_iei))
+    
+  } else {
+    result_list$loc_burst <- c(result_list$loc_burst, NA)
+    result_list$date_burst <- c(result_list$date_burst, NA)
+  }
+  
+  wfirst_date <- wfirst_date + wstep_size
+  wlast_date <- wlast_date + wstep_size
+}
+
+slidw_df <- data.frame(result_list)
+slidw_df$start_date <- start_date_seq
+
+slidw_df <- slidw_df[,c(5,1:4)]
+
+write_csv(slidw_df,
+          file.path(picasso_path, "results",
+                    paste0("ars40switch_search_empi_step_summary.csv")))
+
+ars_cstep_plot <- slidw_df %>% 
+  ggplot(aes(x=start_date, cstep_avg)) +
   geom_line() +
-  theme_minimal()
+  scale_y_continuous(limits=c(0,0.5)) +
+  theme_classic()
 
-tibble(iter_i = 1:length(abs_step_sizes), step_size = abs_step_sizes_norm) %>% 
-  filter(iter_i > 100) %>% 
-  ggplot(aes(x = iter_i, y = step_size)) +
+ars_dim_plot <- slidw_df %>% 
+  ggplot(aes(x=start_date, dim90)) +
   geom_line() +
-  theme_minimal()
+  theme_classic()
+
+ars_burst_plot <- slidw_df %>% 
+  ggplot(aes(x=start_date, loc_burst)) +
+  geom_line() +
+  scale_y_continuous(limits=c(-1,1)) +
+  theme_classic()
+
+ars_dburst_plot <- slidw_df %>% 
+  ggplot(aes(x=start_date, date_burst)) +
+  geom_line() +
+  scale_y_continuous(limits=c(-1,1)) +
+  theme_classic()
+
+# slidw_df %>% filter(is.na(loc_burst))
+
+ars_hburst_plot <- slidw_df %>% 
+  ggplot(aes(x=loc_burst)) +
+  geom_histogram(bins=40) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_continuous("Burstiness", limits=c(-1,1)) +
+  ylab("frequency") +
+  theme_classic()
+
+ars_cstep_plot
+ggsave("img/ars12switch_cstep.png", width = 12, height = 6)
+
+ars_burst_plot
+# ggsave("img/ars40switch_burst.png", width = 12, height = 6)
+
+ars_hburst_plot
+ggsave("img/ars12switch_hburst.png", width = 12, height = 6)
 ```
 
 
 ```{r}
-# Dimensionality is PCA on state vectors
-style_dim.df <- tibble()
-window_size <- 100
-step_size <- 1
+exp_smry_df <- read_csv(file.path(picasso_path, "results",
+                                  "expand_search_empi_step_summary.csv"))
 
-for(yeari in seq(1, n_iter-window_size, step_size)) {
-  states.subi <- states_norm[yeari:(yeari+window_size)-1,]
-  
-  states.subi.pca <- prcomp(states.subi)
-  cum.sdev.prop <- cumsum(states.subi.pca$sdev/sum(states.subi.pca$sdev))
-  
-  style_dim90 <- sum((cum.sdev.prop < .90)) + 1
-  style_dim75 <- sum((cum.sdev.prop < .75)) + 1
-  style_dim50 <- sum((cum.sdev.prop < .50)) + 1
-  style_dim.df <- bind_rows(style_dim.df, 
-                            tibble(year = yeari,
-                                   n = nrow(states.subi),
-                                   dim50 = style_dim50,
-                                   dim75 = style_dim75,
-                                   dim90 = style_dim90))
-  
-}
+cont_smry_df <- read_csv(file.path(picasso_path, "results",
+                                   "contract_search_empi_step_summary.csv"))
 
-style_dim.df %>% 
-  ggplot(aes(x=year, dim90)) +
-  geom_line()
+ars_smry_df <- read_csv(file.path(picasso_path, "results",
+                                  "ars_search_empi_step_summary.csv"))
+
+ars_burst_plot <- ars_smry_df %>% 
+  ggplot(aes(x=start_date, loc_burst)) +
+  geom_line() +
+  scale_y_continuous(limits=c(-1,1)) +
+  theme_classic() +
+  theme(axis.title.y=element_blank())
+
+cont_burst_plot <- cont_smry_df %>% 
+  ggplot(aes(x=start_date, loc_burst)) +
+  geom_line() +
+  scale_y_continuous(limits=c(-1,1)) +
+  theme_classic() +
+  theme(axis.title.y=element_blank())
+
+exp_burst_plot <- exp_smry_df %>% 
+  ggplot(aes(x=start_date, loc_burst)) +
+  geom_line() +
+  scale_y_continuous(limits=c(-1,1)) +
+  theme_classic() +
+  theme(axis.title.y=element_blank())
+
+
+plot_grid(
+  ars_title, cont_title, exp_title, 
+  ars_burst_plot, cont_burst_plot, exp_burst_plot,
+  ncol = 3, rel_heights = c(0.1, 1)
+)
+
+ggsave("img/compare_model_locburst.jpg", width = 12, height = 6)
 ```
+
+### Point process and IEI
+
+```{r}
+# Extract IEI data from all the existing dates
+tmp_date_seq <- seq(first_date, last_date - days(1), by = "1 day")
+
+dateDiff <- abs(tmp_date_seq[-length(tmp_date_seq)] - tmp_date_seq[-1])
+dateDiff <- c(0, dateDiff)
+
+burst_inds <- match(exist_dates, tmp_date_seq)
+date_burst <- rep(0, length(tmp_date_seq))
+date_burst[burst_inds] <- 1
+
+date_burst_df <- data.frame(dateStart = dateDiff,
+                            date_burst = as.logical(date_burst))
+
+date_iei <- extract_iei(date_burst_df, burst_ind = 2)
+
+iei_df <- data.frame(start_date = exist_dates, iei = date_iei)
+
+# IEI statistics of the first time window (3 years)
+iei_df %>% 
+  filter(start_date < '1903-01-01') %>% 
+  summarize(avg_iei = mean(iei, na.rm = T), sd_iei = sd(iei, na.rm = T)) %>% 
+  mutate(burstiness = (sd_iei - avg_iei)/(sd_iei + avg_iei))
+
+# IEI dataframe for plotting point process
+nadate_burst <- rep(NA, length(tmp_date_seq))
+nadate_burst[burst_inds] <- 1
+
+date_burst_df <- data.frame(start_date = tmp_date_seq, burst = nadate_burst)
+
+
+# Calculate "date-level" cosine step size
+state_size <- states %>%
+  select(-dateStart) %>% 
+  mutate(across(contains("dim"), ~ . ^2)) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+trimmed_state1 <- states[-1,] %>% select(-dateStart)
+trimmed_state2 <- states[-nrow(states),] %>% select(-dateStart)
+
+dot_pca <- rowSums(trimmed_state1*trimmed_state2) %>% as.vector()
+size_product <- state_size[-1]*state_size[-length(state_size)]
+
+cstep_sizes <- (1 - dot_pca/size_product)/2
+
+step_inds <- match(exist_dates[-1], tmp_date_seq)
+step_burst <- rep(NA, length(tmp_date_seq))
+step_burst[step_inds] <- cstep_sizes
+
+ars_step_burst <- data.frame(start_date = tmp_date_seq, cstep = step_burst)
+
+# Extract IEI data from ARS model based on existing dates
+states.subi <- states %>% 
+  filter(dateStart < '1903-01-01')
+trimmed_pca1 <- states.subi[-1,] # remove the first row
+trimmed_pca2 <- states.subi[-nrow(states.subi),] # remove the last row
+
+cstep.subi <- data.frame(start_date = exist_dates[-1],
+                         cstep = cstep_sizes) %>% 
+  filter(start_date < '1903-01-01') %>% 
+  pull(cstep)
+
+# movement vectors
+mvt_df <- trimmed_pca1 - trimmed_pca2
+
+loc_threshold <- mean(cstep_sizes) + (1*sd(cstep_sizes))
+
+cstep.subi > loc_threshold
+
+burst_df.subi <- data.frame(date_diff = mvt_df$dateStart)
+burst_df.subi$loc_bigstep <- detect_burst(cstep.subi, thresh=loc_threshold, scale=F)
+step_iei1 <- extract_iei(burst_df.subi)
+
+burst_df.subi %>% 
+  filter(loc_bigstep)
+
+mean(step_iei1[-1])
+sd(step_iei1[-1])
+(sd(step_iei1[-1]) - mean(step_iei1[-1]))/(sd(step_iei1[-1]) + mean(step_iei1[-1]))
+
+
+# point process plots
+date_burst_df %>% 
+  ggplot(aes(x = start_date, y = burst)) +
+  geom_point(size = 0.5) +
+  coord_cartesian(xlim = c(ymd('1900-01-01'), ymd('1906-01-01'))) +
+  theme_classic()
+ggsave("img/date_point_process.jpg", width = 12, height = 6)
+
+# mean = 0.1403839
+ars_step_burst %>% 
+  ggplot(aes(x = start_date, y = cstep)) +
+  geom_point(size = 1) +
+  coord_cartesian(xlim = c(ymd('1900-01-01'), ymd('1906-01-01'))) +
+  ylim(c(0,0.55)) +
+  # geom_hline(yintercept = loc_threshold) +
+  theme_classic()
+ggsave("img/locburst_point_process.jpg", width = 12, height = 6)
+
+ars_step_burst %>% 
+  filter(start_date < '1903-01-01') %>% 
+  summarize(avg_cstep = mean(cstep, na.rm = T),
+            sd_cstep = sd(cstep, na.rm = T))
+```
+
