@@ -20,10 +20,14 @@ library(ggrepel)
 
 home_dir <- path.expand("~")
 picasso_path <- file.path(home_dir, "Library/CloudStorage/Box-Box/QuantifyingPicasso")
+van_gogh_path <- file.path(picasso_path, "van_gogh")
+vg_data_path <- file.path(van_gogh_path, "van_gogh_data")
 target_cat <- "painting"
+feature_model <- "resnet"
 ```
 
 # Data loading
+## Picasso
 ```{r}
 # artwork tabular data
 art_data <- read.delim("raw_data/artwork1.csv", colClasses = "character") # /t as separator
@@ -106,6 +110,28 @@ majorPeriodOnset <- tibble(period = c("Blue",
          onsetYear = floor(timeWindow))
 ```
 
+## Van Gogh
+```{r}
+# artwork tabular data
+art_data <- read.csv(file.path(vg_data_path,
+                               "van_gogh_catalogue_raisonne_metadata2.csv"),
+                     colClasses = "character")
+
+img_dir <- file.path(van_gogh_path, "van_gogh_images")
+
+# extract years for Van Gogh's work
+art_data <- art_data %>% 
+  mutate(period = gsub("^.*\\(", "", Era),
+         period = substr(period, 1, nchar(period)-1),
+         year = as.integer(str_extract(gsub("^.* ", "", Origin), "(\\d+)")))
+
+# select necessary columns
+reduced_art <- art_data %>% 
+  select(PaintingName, Era, year, CurrentLocation)
+```
+
+
+
 # Code testing
 ```{r}
 # model loading
@@ -173,30 +199,31 @@ x <- imagenet_preprocess_input(x)
 # Image feature extraction (Samples)
 ```{r}
 # model loading
-base_model <- application_vgg16(weights = 'imagenet')
-# intermediate layers
-model.conv1 <- keras_model(inputs = base_model$input,
-                           outputs = get_layer(base_model, 'block1_conv1')$output)
-model.pool1 <- keras_model(inputs = base_model$input,
-                           outputs = get_layer(base_model, 'block1_pool')$output)
-model.fc2 <- keras_model(inputs = base_model$input,
-                         outputs = get_layer(base_model, 'fc2')$output)
+feature_model <- "resnet"
 
-
-# resnet model
-base_model <- application_resnet50(weights = 'imagenet')
-# (None, 112, 112, 64)
-model.conv1 <- keras_model(inputs = base_model$input,
-                           outputs = get_layer(base_model, 'conv1_conv')$output)
-# (None, 56, 56, 64)
-model.pool1 <- keras_model(inputs = base_model$input,
-                           outputs = get_layer(base_model, 'pool1_pool')$output)
-# (None, 14, 14, 256)
-model.conv4 <- keras_model(inputs = base_model$input,
-                           outputs = get_layer(base_model, 'conv4_block1_1_conv')$output)
-# (None, 2048)
-model.avgpool <- keras_model(inputs = base_model$input,
-                             outputs = get_layer(base_model, 'avg_pool')$output)
+if (feature_model == "vgg") {
+  # vgg model
+  base_model <- application_vgg16(weights = 'imagenet')
+  # intermediate layers
+  model.conv1 <- keras_model(inputs = base_model$input,
+                             outputs = get_layer(base_model, 'block1_conv1')$output)
+  model.pool1 <- keras_model(inputs = base_model$input,
+                             outputs = get_layer(base_model, 'block1_pool')$output)
+  model.fc <- keras_model(inputs = base_model$input,
+                          outputs = get_layer(base_model, 'fc2')$output)
+} else if (feature_model == "resnet") {
+  # resnet model
+  base_model <- application_resnet50(weights = 'imagenet')
+  # (None, 112, 112, 64)
+  model.conv1 <- keras_model(inputs = base_model$input,
+                             outputs = get_layer(base_model, 'conv1_conv')$output)
+  # (None, 56, 56, 64)
+  model.pool1 <- keras_model(inputs = base_model$input,
+                             outputs = get_layer(base_model, 'pool1_pool')$output)
+  # (None, 2048)
+  model.fc <- keras_model(inputs = base_model$input,
+                          outputs = get_layer(base_model, 'avg_pool')$output)
+}
 
 
 batch_size <- 30
@@ -250,11 +277,11 @@ for (year in year_list) {
   feature.pool1 <- model.pool1 %>% 
     predict(x) %>% 
     rowMeans(dims = 2)
-  feature.fc2 <- model.fc2 %>% 
+  feature.fc <- model.fc %>% 
     predict(x)
   
   low_features <- rbind(low_features, cbind(feature.conv1, feature.pool1))
-  high_features <- rbind(high_features, feature.fc2)
+  high_features <- rbind(high_features, feature.fc)
 }
 
 # filter out null (zero-valued) columns
@@ -280,12 +307,27 @@ full_df$yearStart <- sample_paintings$yearStart
 # PCA on pre-processed image features
 ```{r}
 # change path according to where the feature data are stored
-feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
+artist <- "van_gogh"
+if (artist == "picasso") {
+  feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
 
-low_features <- fread(file.path(feature_path, paste0("low_feature_", target_cat, ".csv"))) %>% 
-  as.data.frame()
-high_features <- fread(file.path(feature_path, paste0("high_feature_", target_cat, ".csv"))) %>% 
-  as.data.frame()
+  low_features <- fread(file.path(feature_path, paste0("low_feature_", target_cat, "_",
+                                                       feature_model, ".csv"))) %>% 
+    as.data.frame()
+  high_features <- fread(file.path(feature_path, paste0("high_feature_", target_cat, "_",
+                                                        feature_model, ".csv"))) %>%
+    as.data.frame()
+} else {
+  feature_path <- file.path(picasso_path, "van_gogh", "van_gogh_data")
+
+  low_features <- fread(file.path(feature_path, paste0("low_feature_",
+                                                       feature_model, ".csv"))) %>% 
+    as.data.frame()
+  high_features <- fread(file.path(feature_path, paste0("high_feature_",
+                                                        feature_model, ".csv"))) %>%
+    as.data.frame()
+}
+
 
 # filter out null (zero-valued) columns
 nz_masks <- high_features %>% 
@@ -304,36 +346,46 @@ colnames(high_features) <- paste0("high_pc", 1:100)
 # combine low-level and high-level features
 full_features <- cbind(low_features, high_features)
 
-load("track_list.Rdata")
 
-# get the target category indices
-cat_opps <- reduced_art %>% 
-  filter(category == target_cat) %>% 
-  pull(opp)
-cat_filter <- track_list$opp %in% cat_opps
+if (artist == "picasso") {
+  load(paste0("track_list_", target_cat, "_", feature_model, ".Rdata"))
 
-# extract other features from the original dataset
-full_df <- data.frame(opp = track_list$opp[cat_filter]) %>% 
-  left_join(reduced_art, by = "opp")
-full_df <- cbind(full_df, full_features)
-
-# save PCA results
-full_df %>%
-  data.table() %>%
-  fwrite(file.path(feature_path, paste0("pca_", target_cat, ".csv")))
+  # get the target category indices
+  cat_opps <- reduced_art %>% 
+    filter(category == target_cat) %>% 
+    pull(opp)
+  cat_filter <- track_list$opp %in% cat_opps
+  
+  # extract other features from the original dataset
+  full_df <- data.frame(opp = track_list$opp[cat_filter]) %>% 
+    left_join(reduced_art, by = "opp")
+  full_df <- cbind(full_df, full_features)
+  
+  # save PCA results
+  full_df %>%
+    data.table() %>%
+    fwrite(file.path(feature_path, paste0("pca_", target_cat, "_", feature_model, ".csv")))
+} else {
+  full_df <- cbind(reduced_art, full_features)
+  
+  # save PCA results
+  full_df %>%
+    data.table() %>%
+    fwrite(file.path(feature_path, paste0("pca_", feature_model, ".csv")))
+}
 ```
 
 ```{r}
 # pca explained standard deviations
 ggplot() +
-  geom_point(aes(x = 1:336, y = low.pca.results$sdev)) +
+  geom_point(aes(x = 1:length(low.pca.results$sdev), y = low.pca.results$sdev)) +
   geom_vline(xintercept = 100, color = "blue") +
   xlab("pca dimension") +
   ylab("explained sdev") +
   labs(title = "low-level feature pca")
 
 ggplot() +
-  geom_point(aes(x = 1:3367, y = high.pca.results$sdev)) +
+  geom_point(aes(x = 1:length(high.pca.results$sdev), y = high.pca.results$sdev)) +
   geom_vline(xintercept = 100, color = "blue") +
   xlab("pca dimension") +
   ylab("explained sdev") +
@@ -344,6 +396,6 @@ ggplot() +
 pca_sd_list <- list(low_sd = low.pca.results$sdev,
                     high_sd = high.pca.results$sdev)
 
-save(pca_sd_list, file = "pca_sd_list.Rdata")
+save(pca_sd_list, file = paste0("pca_sd_list", target_cat, "_", feature_model, ".Rdata"))
 ```
 
