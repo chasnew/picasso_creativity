@@ -1,0 +1,1921 @@
+---
+title: "Visualization composition"
+author: "Chanuwas (New) Aswamenakul"
+date: '2024-07-15'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(data.table)
+library(lubridate)
+library(stringr)
+library(entropy)
+library(cowplot)
+library(ggrepel)
+library(patchwork)
+
+home_dir <- path.expand("~")
+picasso_path <- file.path(home_dir, "Library/CloudStorage/Box-Box/QuantifyingPicasso")
+van_gogh_path <- file.path(picasso_path, "van_gogh")
+vg_data_path <- file.path(van_gogh_path, "van_gogh_data")
+
+artist <- "picasso"
+
+cbPalette <- c('#999999', '#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2', '#D55E00', '#CC79A7')
+```
+
+# Data loading
+
+```{r}
+art_data <- read.delim("raw_data/artwork1.csv", colClasses = "character") # /t as separator
+
+# parse out date, month, and year variables from existing columns
+art_data <- art_data %>% 
+  separate(dateEnd, c("yearEnd","monthEnd","dayEnd"), remove = FALSE) %>% 
+  separate(dateStart, c("yearStart","monthStart","dayStart"), remove = FALSE) %>% 
+  mutate(yearEnd = as.numeric(yearEnd),
+         monthEnd = as.numeric(monthEnd),
+         dayEnd = as.numeric(dayEnd),
+         yearStart = as.numeric(yearStart),
+         monthStart = as.numeric(monthStart),
+         dayStart = as.numeric(dayStart))
+
+# remove weird data (8 entries)
+art_data <- art_data %>%
+  filter(category != "25~26-March/1936") %>% # shifted column (fixable)
+  filter(category != "") %>% # empty rows
+  filter(yearEnd != 0) # 2 entries w/ missing end dates
+
+# number of years to finish
+art_data <- art_data %>%
+  mutate(yearDuration = yearEnd - yearStart)
+
+# fill months and dates
+art_data <- art_data %>% 
+  mutate(monthEnd_fix = case_when(monthEnd == 0 ~ 6.5,
+                                  TRUE ~ monthEnd),
+         dayEnd_fix = case_when(dayEnd == 0 ~ 15.5,
+                                  TRUE ~ dayEnd),
+         monthStart_fix = case_when(monthStart == 0 ~ 6.5,
+                                  TRUE ~ monthStart),
+         dayStart_fix = case_when(dayStart == 0 ~ 15.5,
+                                  TRUE ~ dayStart)) %>%
+  mutate(dateEnd = make_date(yearEnd, monthEnd_fix, dayEnd_fix), # convert dateEnd into date type
+         dateStart = make_date(yearStart, monthStart_fix, dayStart_fix), # convert dateStart into date type
+         yearMonthStart = yearStart + monthStart_fix/12 + dayStart_fix/365) %>% # convert date into year scale
+  mutate(date_duration = dateEnd - dateStart)
+
+# select necessary columns
+reduced_art <- art_data %>% 
+  select(opp, title, category, dayStart, monthStart, yearStart, yearMonthStart, dateStart)
+
+paintings <- reduced_art %>% 
+  filter(category == "painting")
+
+# Set up non-overlapping windows
+annualBins <- 12 # 12 months
+windowSize <- 1/annualBins # window size on the year scale (1 month)
+
+# major artistic periods
+majorPeriodOnset <- tibble(period = c("Blue",
+                                      "Rose",
+                                      "Les Demoiselles d'Avignon",
+                                      "Horta de Hebra landscapes",
+                                      "Analytic Cubism",
+                                      "Synthetic Cubism",
+                                      "WW1 Start",
+                                      "Neoclassicism", 
+                                      "Surrealism\n(Mandoline et guitare)",
+                                      "Surrealism\n(Trois denseurs)"),
+                           yearMonthStart = c(1901,
+                                              1904, 
+                                              1907.583,
+                                              1909.750,
+                                              1912 + 9/12, # changed from 9/12
+                                              1912.5,
+                                              1914.5, 
+                                              1918, 
+                                              1924.583, 
+                                              1925+2/12)) %>% 
+  mutate(timeWindow = ceiling(yearMonthStart / windowSize) * windowSize,
+         onsetYear = floor(timeWindow))
+```
+
+# Load PCA results
+
+```{r}
+target_cat <- "painting"
+feature_model <- "resnet"
+
+if (artist == "picasso") {
+  feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
+  
+  full_df <- fread(file.path(feature_path, paste0("pca_", target_cat, "_", feature_model, ".csv"))) %>% 
+    as.data.frame()
+} else {
+  full_df <- fread(file.path(vg_data_path, paste0("pca_", feature_model, ".csv"))) %>% 
+    as.data.frame()
+}
+# Separate low-level and high-level features for analyses
+low_cols <- str_detect(colnames(full_df), "low")
+low_features <- full_df[low_cols]
+
+high_cols <- str_detect(colnames(full_df), "high")
+high_features <- full_df[high_cols]
+
+full_pc_cols <- str_detect(colnames(full_df), "pc")
+full_features <- full_df[full_pc_cols]
+```
+
+
+# Figure 1
+- Prepare an alternate version of movement sample plots for the presentation (without grey lines)
+
+## tSNE cluster samples
+
+```{r}
+full_tsne_df <- read_csv(file.path(picasso_path, "results", "cstep_full_tsne.csv"))
+
+sample_opps <- c("OPP.33:054", "OPP.33:153",
+                 "OPP.39:023", "OPP.56:008",
+                 "OPP.02:023", "OPP.21:029")
+# select_clust <- c("OPP.47:032", "OPP.24:141", "OPP.09:169", "OPP.54:531",
+#                   "OPP.33:054", "OPP.33:153", "OPP.39:023", "OPP.56:008")
+
+non_sample_df <- full_tsne_df %>% 
+  filter(!(opp %in% sample_opps))
+
+sample_df <- full_tsne_df %>% 
+  filter(opp %in% sample_opps)
+
+ggplot(data = non_sample_df, aes(x = full_tsne1, y = full_tsne2), color="black") +
+  geom_point(alpha=0.1) +
+  geom_point(data=sample_df, color="red", size=2.5) +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.title=element_blank(),
+        axis.text=element_blank(),
+        axis.ticks=element_blank(),
+        panel.grid = element_blank(),
+        panel.border = element_rect(linewidth = 2))
+
+
+ggsave(paste0("img/full_costsne_", feature_model, "_", artist, "_clust.png"),
+       width = 6, height = 6)
+```
+
+### scratch pad
+
+```{r}
+full_sample_df <- full_df %>% 
+  left_join(art_data %>% select(opp, dayStart, dateStart),
+            by = "opp") %>% 
+  filter(monthStart != 0, dayStart != 0, opp %in% sample_opps) %>% 
+  arrange(yearStart, monthStart, dayStart) %>% 
+  select(dateStart, opp, low_pc1:high_pc100)
+
+trimmed_pca1 <- d_ordered_pca[-1,] # remove the first row
+trimmed_pca2 <- d_ordered_pca[-nrow(d_ordered_pca),] # remove the last row
+
+## Cosine step sizes
+abs_step_sizes <- full_sample_df %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+dot_pca1 <- sum(full_sample_df[5,3:202]*full_sample_df[6,3:202])
+size_product1 <- abs_step_sizes[5]*abs_step_sizes[6]
+
+step_size1 <- (1 - dot_pca1/size_product1)/2
+
+
+dot_pca2 <- sum(full_sample_df[3,3:202]*full_sample_df[6,3:202])
+size_product2 <- abs_step_sizes[3]*abs_step_sizes[6]
+
+step_size2 <- (1 - dot_pca2/size_product2)/2
+
+
+dot_pca3 <- sum(full_sample_df[2,3:202]*full_sample_df[6,3:202])
+size_product3 <- abs_step_sizes[2]*abs_step_sizes[6]
+
+step_size3 <- (1 - dot_pca3/size_product3)/2
+
+
+
+step_size1
+step_size2
+step_size3
+```
+
+## Combining plots
+
+```{r}
+fig1_alabel <- ggdraw() + 
+  draw_label(
+    "a",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+fig1_blabel <- ggdraw() + 
+  draw_label(
+    "b",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+fig1_clabel <- ggdraw() + 
+  draw_label(
+    "c",
+    fontface = 'bold',
+    size = 12,
+    x = 0.05, y = 0.1,
+    hjust = 0.5, vjust = 0
+  )
+
+fig1_dlabel <- ggdraw() + 
+  draw_label(
+    "d",
+    fontface = 'bold',
+    size = 12,
+    x = 0.05, y = 0.1,
+    hjust = 0.5, vjust = 0
+  )
+
+method_file <- file.path("img", "Picasso_method.jpg")
+method_draw <- ggdraw() +
+  draw_image(
+    method_file, scale = 1
+  )
+
+tsne_clust_file <- file.path("img", "full_tsne_cluster_samples.jpg")
+tsne_clust_draw <- ggdraw() +
+  draw_image(
+    tsne_clust_file, scale = 1
+  )
+
+meas_cal_file <- file.path("img", "measure_calculation.jpg")
+meas_cal_draw <- ggdraw() +
+  draw_image(
+    meas_cal_file, scale = 1
+  )
+
+diff_illus_file <- file.path("img", "style_diff_illustration.png")
+diff_illus_draw <- ggdraw() +
+  draw_image(
+    diff_illus_file, scale = 1
+  )
+
+# illus_plot <- plot_grid(
+#   fig1_clabel, NA, fig1_dlabel,
+#   tsne_clust_draw, NA, diff_illus_draw,
+#   ncol = 3, rel_heights = c(0.1, 1), rel_widths = c(1, 0.1, 0.5)
+# )
+
+right_panel <- plot_grid(
+  meas_cal_draw, fig1_clabel, tsne_clust_draw,
+  ncol = 1, rel_heights = c(0.55, 0.1, 1)
+)
+
+figure1 <- plot_grid(
+  fig1_alabel, NA, fig1_blabel,
+  method_draw, NA, right_panel,
+  ncol = 3, rel_widths = c(1, 0.05, 1),
+  rel_heights = c(0.025, 1)
+)
+
+ggsave("img/picasso_fig1.jpg", plot = figure1, width = 12, height = 8)
+```
+
+# Figure 2
+
+## Movement samples
+
+### Expanding search
+
+```{r}
+exp_states <- read_csv(file.path(picasso_path, "results", "expand_search_empi_states.csv"))
+
+exp_states$step <- 1:nrow(exp_states)
+
+cropped_exp <- exp_states %>% 
+  filter(step <= 102)
+
+exp_first_phase <- cropped_exp %>% 
+  filter(step <= 34) %>% 
+  ggplot(aes(x = dim21, y = dim22)) +
+  geom_point() +
+  geom_path() +
+  scale_x_continuous(limits=c(-1,1), breaks = NULL) +
+  scale_y_continuous(limits=c(-1,1), breaks = NULL) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.title = element_blank(),
+        panel.border = element_rect(linewidth = 2),
+        plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"))
+
+# exp_second_phase <- cropped_exp %>% 
+#   filter(step <= 25) %>% 
+#   ggplot(aes(x = dim1, y = dim21)) +
+#   geom_point(color = "grey75") +
+#   geom_path(color = "grey75") +
+#   geom_point(data = cropped_exp %>% filter(step >= 25, step <= 50), color = "black") +
+#   geom_path(data = cropped_exp %>% filter(step >= 25, step <= 50), color = "black") +
+#   scale_x_continuous(limits=c(-1,1), breaks = NULL) +
+#   scale_y_continuous(limits=c(-1,1), breaks = NULL) +
+#   theme_bw() +
+#   theme(panel.grid = element_blank(),
+#         axis.title = element_blank(),
+#         panel.border = element_rect(linewidth = 2),
+#         plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"),
+#         legend.position = "none")
+
+exp_second_phase <- cropped_exp %>% 
+  filter(step >= 34, step <= 68) %>% 
+  ggplot(aes(x = dim21, y = dim22)) +
+  geom_point(color = "black") +
+  geom_path(color = "black") +
+  scale_x_continuous(limits=c(-1,1), breaks = NULL) +
+  scale_y_continuous(limits=c(-1,1), breaks = NULL) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.title = element_blank(),
+        panel.border = element_rect(linewidth = 2),
+        plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"),
+        legend.position = "none")
+
+# exp_third_phase <- cropped_exp %>% 
+#   filter(step <= 50) %>% 
+#   ggplot(aes(x = dim1, y = dim21)) +
+#   geom_point(color = "grey75") +
+#   geom_path(color = "grey75") +
+#   geom_point(data = cropped_exp %>% filter(step >= 50), color = "black") +
+#   geom_path(data = cropped_exp %>% filter(step >= 50), color = "black") +
+#   scale_x_continuous(limits=c(-1,1), breaks = NULL) +
+#   scale_y_continuous(limits=c(-1,1), breaks = NULL) +
+#   theme_bw() +
+#   theme(panel.grid = element_blank(),
+#         axis.title = element_blank(),
+#         panel.border = element_rect(linewidth = 2),
+#         plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"),
+#         legend.position = "none")
+
+exp_third_phase <- cropped_exp %>% 
+  filter(step >= 68) %>% 
+  ggplot(aes(x = dim21, y = dim22), color = "black") +
+  geom_point() +
+  geom_path() +
+  scale_x_continuous(limits=c(-1,1), breaks = NULL) +
+  scale_y_continuous(limits=c(-1,1), breaks = NULL) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.title = element_blank(),
+        panel.border = element_rect(linewidth = 2),
+        plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"),
+        legend.position = "none")
+
+plot_grid(
+  exp_first_phase, exp_second_phase, exp_third_phase,
+  ncol = 3
+)
+```
+
+### Constrictive search
+
+```{r}
+cont_states <- read_csv(file.path(picasso_path, "results", "contract_search_empi_states.csv"))
+cont_states$step <- 1:nrow(exp_states)
+
+cropped_cont <- cont_states %>% 
+  filter(step > 40, step <= 130)
+
+cont_first_phase <- cropped_cont %>% 
+  filter(step <= 70) %>% 
+  ggplot(aes(x = dim22, y = dim21)) +
+  geom_point() +
+  geom_path() +
+  scale_x_continuous(limits=c(-1,1), breaks = NULL) +
+  scale_y_continuous(limits=c(-1,1), breaks = NULL) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.title = element_blank(),
+        panel.border = element_rect(linewidth = 2),
+        plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"))
+
+# cont_second_phase <- cropped_cont %>% 
+#   filter(step <= 50) %>% 
+#   ggplot(aes(x = dim1, y = dim21)) +
+#   geom_point(color = "grey75") +
+#   geom_path(color = "grey75") +
+#   geom_point(data = cropped_cont %>% filter(step >= 50, step <= 75), color = "black") +
+#   geom_path(data = cropped_cont %>% filter(step >= 50, step <= 75), color = "black") +
+#   scale_x_continuous(limits=c(-1,1), breaks = NULL) +
+#   scale_y_continuous(limits=c(-1,1), breaks = NULL) +
+#   theme_bw() +
+#   theme(panel.grid = element_blank(),
+#         axis.title = element_blank(),
+#         panel.border = element_rect(linewidth = 2),
+#         plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"),
+#         legend.position = "none")
+
+cont_second_phase <- cropped_cont %>% 
+  filter(step >= 70, step <= 100) %>% 
+  ggplot(aes(x = dim22, y = dim21), color = "black") +
+  geom_point() +
+  geom_path() +
+  scale_x_continuous(limits=c(-1,1), breaks = NULL) +
+  scale_y_continuous(limits=c(-1,1), breaks = NULL) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.title = element_blank(),
+        panel.border = element_rect(linewidth = 2),
+        plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"),
+        legend.position = "none")
+
+# cont_third_phase <- cropped_cont %>% 
+#   filter(step <= 75) %>% 
+#   ggplot(aes(x = dim1, y = dim21)) +
+#   geom_point(color = "grey75") +
+#   geom_path(color = "grey75") +
+#   geom_point(data = cropped_cont %>% filter(step >= 75), color = "black") +
+#   geom_path(data = cropped_cont %>% filter(step >= 75), color = "black") +
+#   scale_x_continuous(limits=c(-1,1), breaks = NULL) +
+#   scale_y_continuous(limits=c(-1,1), breaks = NULL) +
+#   theme_bw() +
+#   theme(panel.grid = element_blank(),
+#         axis.title = element_blank(),
+#         panel.border = element_rect(linewidth = 2),
+#         plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"),
+#         legend.position = "none")
+
+cont_third_phase <- cropped_cont %>% 
+  filter(step >= 100) %>% 
+  ggplot(aes(x = dim22, y = dim21), color = "black") +
+  geom_point() +
+  geom_path() +
+  scale_x_continuous(limits=c(-1,1), breaks = NULL) +
+  scale_y_continuous(limits=c(-1,1), breaks = NULL) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.title = element_blank(),
+        panel.border = element_rect(linewidth = 2),
+        plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"),
+        legend.position = "none")
+
+plot_grid(
+  cont_first_phase, cont_second_phase, cont_third_phase,
+  ncol = 3
+)
+
+# cont_states %>% 
+#   filter(step >= 500, step <= 550) %>% 
+#   ggplot(aes(x = dim22, y = dim21), color = "black") +
+#   geom_point() +
+#   geom_path() +
+#   scale_x_continuous(limits=c(-1,1), breaks = NULL) +
+#   scale_y_continuous(limits=c(-1,1), breaks = NULL) +
+#   theme_bw() +
+#   theme(panel.grid = element_blank(),
+#         axis.title = element_blank(),
+#         panel.border = element_rect(linewidth = 2),
+#         plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"),
+#         legend.position = "none")
+```
+
+### Area-restricted search
+
+```{r}
+ars_states <- read_csv(file.path(picasso_path, "results", "ars40switch_search_empi_states.csv"))
+ars_states$step <- 1:nrow(exp_states)
+
+cropped_ars <- ars_states %>% 
+  filter(step <= 84)
+
+ars_first_phase <- cropped_ars %>% 
+  filter(step <= 28) %>% 
+  ggplot(aes(x = dim21, y = dim22)) +
+  geom_point() +
+  geom_path() +
+  scale_x_continuous(limits=c(-1,1), breaks = NULL) +
+  scale_y_continuous(limits=c(-1,1), breaks = NULL) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.title = element_blank(),
+        panel.border = element_rect(linewidth = 2),
+        plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"))
+
+# ars_second_phase <- cropped_ars %>% 
+#   filter(step <= 28) %>% 
+#   ggplot(aes(x = dim21, y = dim22, color = early)) +
+#   geom_point(color = "grey75") +
+#   geom_path(color = "grey75") +
+#   geom_point(data = cropped_ars %>% filter(step >= 28, step <= 56), color = "black") +
+#   geom_path(data = cropped_ars %>% filter(step >= 28, step <= 56), color = "black") +
+#   scale_x_continuous(limits=c(-1,1), breaks = NULL) +
+#   scale_y_continuous(limits=c(-1,1), breaks = NULL) +
+#   theme_bw() +
+#   theme(panel.grid = element_blank(),
+#         axis.title = element_blank(),
+#         panel.border = element_rect(linewidth = 2),
+#         plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"),
+#         legend.position = "none")
+
+ars_second_phase <- cropped_ars %>% 
+  filter(step >= 28, step <= 56) %>% 
+  ggplot(aes(x = dim21, y = dim22), color = "black") +
+  geom_point() +
+  geom_path() +
+  scale_x_continuous(limits=c(-1,1), breaks = NULL) +
+  scale_y_continuous(limits=c(-1,1), breaks = NULL) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.title = element_blank(),
+        panel.border = element_rect(linewidth = 2),
+        plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"),
+        legend.position = "none")
+
+# ars_third_phase <- cropped_ars %>% 
+#   filter(step <=  56) %>% 
+#   ggplot(aes(x = dim21, y = dim22)) +
+#   geom_point(color = "grey75") +
+#   geom_path(color = "grey75") +
+#   geom_point(data = cropped_ars %>% filter(step >= 56), color = "black") +
+#   geom_path(data = cropped_ars %>% filter(step >= 56), color = "black") +
+#   scale_x_continuous(limits=c(-1,1), breaks = NULL) +
+#   scale_y_continuous(limits=c(-1,1), breaks = NULL) +
+#   theme_bw() +
+#   theme(panel.grid = element_blank(),
+#         axis.title = element_blank(),
+#         panel.border = element_rect(linewidth = 2),
+#         plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"),
+#         legend.position = "none")
+
+ars_third_phase <- cropped_ars %>% 
+  filter(step >=  56) %>% 
+  ggplot(aes(x = dim21, y = dim22), color = "black") +
+  geom_point() +
+  geom_path() +
+  scale_x_continuous(limits=c(-1,1), breaks = NULL) +
+  scale_y_continuous(limits=c(-1,1), breaks = NULL) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.title = element_blank(),
+        panel.border = element_rect(linewidth = 2),
+        plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"),
+        legend.position = "none")
+
+plot_grid(
+  ars_first_phase, ars_second_phase, ars_third_phase,
+  ncol = 3
+)
+```
+
+### Time axis
+
+```{r}
+axis.gg <- ggplot() +
+  annotate("segment", y=0.5,yend=0.5,x=0,xend=3,arrow=arrow(type = "closed"), linewidth=1.5) +
+  annotate("segment", x=c(.5, 1.5, 2.5),xend=c(.5, 1.5, 2.5),y=.49,yend=.51) +
+  annotate("text", x=c(.5, 1.5, 2.5), y=0.54, angle=0,
+           label = c(expression(t),
+                     expression(t+ Delta*t),
+                     expression(t+2 *Delta*t)),
+           size = 6.2) +
+  scale_x_continuous(limits = c(0, 3.05), expand = c(0,0)) +
+  scale_y_continuous(limits = c(0.47, 0.57)) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.title = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text = element_blank())
+axis.gg
+# ggsave("~/Downloads/axis.gg.png", axis.gg, width = 5, height = 1)
+
+
+# axis.gg1 <- ggplot() + 
+#   annotate("segment", y=0.5,yend=0.5,x=0,xend=1, linewidth=1.5) + 
+#   annotate("segment", x=.5,xend=.5,y=.49,yend=.51) + 
+#   annotate("text", x=.5, y=0.53, angle=0,
+#            label = expression(t),
+#            size = 5) + 
+#   scale_x_continuous(limits = c(0, 1), expand = c(0,0)) +
+#   scale_y_continuous(limits = c(0.48, 0.55)) +
+#   theme_bw() + 
+#   theme(axis.line = element_blank(),
+#         axis.title = element_blank(), 
+#         axis.ticks = element_blank(), 
+#         axis.text = element_blank(),
+#         panel.grid = element_blank(),
+#         panel.border = element_blank(),
+#         plot.margin = unit(c(0,0,0,0), "cm"))
+# 
+# axis.gg2 <- ggplot() + 
+#   annotate("segment", y=0.5,yend=0.5,x=0,xend=1, linewidth=1.5) + 
+#   annotate("segment", x=.5,xend=.5,y=.49,yend=.51) + 
+#   annotate("text", x=.5, y=0.53, angle=0,
+#            label = expression(t+ Delta*t),
+#            size = 5) + 
+#   scale_x_continuous(limits = c(0, 1), expand = c(0,0)) +
+#   scale_y_continuous(limits = c(0.48, 0.55)) +
+#   theme_bw() + 
+#   theme(axis.line = element_blank(),
+#         axis.title = element_blank(), 
+#         axis.ticks = element_blank(), 
+#         axis.text = element_blank(),
+#         panel.grid = element_blank(),
+#         panel.border = element_blank(),
+#         plot.margin = unit(c(0,0,0,0), "cm"))
+# 
+# axis.gg3 <- ggplot() + 
+#   annotate("segment", y=0.5,yend=0.5,x=0,xend=1,
+#            arrow=arrow(type = "closed"), linewidth=1.5) + 
+#   annotate("segment", x=.5,xend=.5,y=.49,yend=.51) + 
+#   annotate("text", x=.5, y=0.53, angle=0,
+#            label = expression(t+2 *Delta*t),
+#            size = 5) + 
+#   scale_x_continuous(limits = c(0, 1.05), expand = c(0,0)) +
+#   scale_y_continuous(limits = c(0.48, 0.55)) +
+#   theme_bw() + 
+#   theme(axis.line = element_blank(),
+#         axis.title = element_blank(), 
+#         axis.ticks = element_blank(), 
+#         axis.text = element_blank(),
+#         panel.grid = element_blank(),
+#         panel.border = element_blank(),
+#         plot.margin = unit(c(0,0,0,0), "cm"))
+# 
+# plot_grid(axis.gg1, axis.gg2, axis.gg3,
+#           ncol = 3)
+```
+
+
+### Combining samples
+
+```{r}
+
+fig2_alabel <- ggdraw() + 
+  draw_label(
+    "a",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.2,
+    hjust = 0, vjust = 0
+  )
+
+fig2_elabel <- ggdraw() + 
+  draw_label(
+    "e",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.2,
+    hjust = 0, vjust = 0
+  )
+
+fig2_ilabel <- ggdraw() + 
+  draw_label(
+    "i",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.2,
+    hjust = 0, vjust = 0
+  )
+
+exp_title <- ggdraw() + 
+  draw_label(
+    "Expansive\nSearch",
+    fontface = 'bold',
+    size = 16,
+    y = 0.6,
+    vjust = 0.5,
+    angle = 90
+  )
+
+cont_title <- ggdraw() + 
+  draw_label(
+    "Constrictive\nSearch",
+    fontface = 'bold',
+    size = 16,
+    y = 0.6,
+    vjust = 0.5,
+    angle = 90
+  )
+
+ars_title <- ggdraw() + 
+  draw_label(
+    "Explore-Exploit\nSearch",
+    fontface = 'bold',
+    size = 16,
+    y = 0.6,
+    vjust = 0.5,
+    angle = 90
+  )
+
+# first_phase_title <- ggdraw() + 
+#   draw_label(
+#     expression("t"),
+#     fontface = 'bold',
+#     size = 12,
+#     y = 0.5,
+#     vjust = 0.5,
+#     angle = 90
+#   )
+# 
+# second_phase_title <- ggdraw() + 
+#   draw_label(
+#     expression("t + "*Delta*"t"),
+#     fontface = 'bold',
+#     size = 12,
+#     y = 0.5,
+#     vjust = 0.5,
+#     angle = 90
+#   )
+# 
+# third_phase_title <- ggdraw() + 
+#   draw_label(
+#     expression("t + 2"*Delta*"t"),
+#     fontface = 'bold',
+#     size = 12,
+#     y = 0.5,
+#     vjust = 0.5,
+#     angle = 90
+#   )
+
+model_title <- plot_grid(
+  ars_title, cont_title, exp_title,
+  ncol = 1
+)
+
+ars_phase_grid <- plot_grid(
+  fig2_alabel, NA, NA,
+  ars_first_phase, ars_second_phase, ars_third_phase,
+  ncol = 3, rel_heights = c(0.1, 1)
+)
+
+cont_phase_grid <- plot_grid(
+  fig2_elabel, NA, NA,
+  cont_first_phase, cont_second_phase, cont_third_phase,
+  ncol = 3, rel_heights = c(0.1, 1)
+)
+
+exp_phase_grid <- plot_grid(
+  fig2_ilabel, NA, NA,
+  exp_first_phase , exp_second_phase, exp_third_phase,
+  ncol = 3, rel_heights = c(0.1, 1)
+)
+
+mvt_sample_plot <- plot_grid(
+  ars_first_phase, ars_second_phase, ars_third_phase,
+  cont_first_phase, cont_second_phase, cont_third_phase,
+  exp_first_phase , exp_second_phase, exp_third_phase,
+  ncol = 3, rel_heights = c(1, 1, 1), rel_widths = c(1, 1, 1)
+)
+
+# mvt_sample_plot <- plot_grid(axis.gg, mvt_sample_plot,
+#           ncol = 1, rel_heights = c(0.1, 1),
+#           align = "h")
+# 
+# ggsave("img/movement_samples2.jpg", width = 12, height = 9)
+```
+
+## Model results
+
+### Expanding search
+
+```{r}
+exp_states <- read_csv(file.path(picasso_path, "results", "expand_search_empi_states.csv"))
+exp_smry_df <- read_csv(file.path(picasso_path, "results", "expand_search_empi_step_summary.csv"))
+exp_smry_df <- exp_smry_df %>% 
+  mutate(diff_burst = loc_burst - date_burst)
+
+# state_size <- exp_states %>%
+#   mutate(across(contains("dim"), ~ . ^2)) %>%
+#   rowSums() %>%
+#   as.vector() %>%
+#   sqrt()
+# 
+# trimmed_state1 <- exp_states[-1,]
+# trimmed_state2 <- exp_states[-nrow(exp_states),]
+# 
+# dot_pca <- rowSums(trimmed_state1*trimmed_state2) %>% as.vector()
+# size_product <- state_size[-1]*state_size[-length(state_size)]
+#   
+# cstep_sizes <- (1 - dot_pca/size_product)/2
+N.logistic <- function(t, k, L, L2, t0) L2 + (L/(1 + exp(-k*(t - t0))))
+
+exp_smry_df$t <- 1:nrow(exp_smry_df)
+lmodel <- nls(cstep_avg ~ N.logistic(t, k, L, L2, t0), data = exp_smry_df, 
+              start = list(k = 0.5, L = 0.1, L2 = 0.2, t0 = 50))
+exp_smry_df$cstep_pred <- predict(lmodel)
+
+
+exp_step_plot <- exp_smry_df %>% 
+  ggplot(aes(x = start_date, y = cstep_avg)) +
+  geom_line() +
+  geom_line(aes(y = cstep_pred), color = "blue", linewidth = 1) +
+  xlab("time (year)") +
+  scale_y_continuous(name = expression(Delta*"("*s[t]*","*s[t+1]*")"),
+                     limits=c(0.15,0.3)) +
+  theme_classic() +
+  theme(axis.title=element_text(size=14),
+        plot.margin = unit(c(0,0.1,0,0.1), "cm"))
+
+exp_dim_plot <- exp_smry_df %>% 
+  ggplot(aes(x=start_date, dim90)) +
+  geom_line() +
+  geom_smooth(method = "lm") +
+  xlab("time (year)") +
+  scale_y_continuous("Dimensionality", limits=c(15,30)) +
+  theme_classic() +
+  theme(axis.title=element_text(size=14),
+        plot.margin = unit(c(0,0.1,0,0.1), "cm"))
+
+# exp_burst_plot <- exp_smry_df %>% 
+#   ggplot(aes(x=start_date, loc_burst)) +
+#   geom_line() +
+#   geom_hline(yintercept = 0, linetype = "dashed") +
+#   geom_smooth(method = "lm") +
+#   xlab("time (year)") +
+#   scale_y_continuous(limits=c(-1,1)) +
+#   theme_classic()
+
+exp_hburst_plot <- exp_smry_df %>% 
+  ggplot(aes(x=loc_burst)) +
+  geom_histogram(bins=40) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_continuous("Burstiness", limits=c(-1,1)) +
+  ylab("frequency") +
+  theme_classic() +
+  theme(axis.title=element_text(size=14),
+        plot.margin = unit(c(0,0.1,0,0.1), "cm"))
+
+plot_grid(
+  exp_step_plot, exp_dim_plot, exp_hburst_plot,
+  ncol = 3
+)
+```
+
+### Constrictive search
+
+```{r}
+# cont_states <- read_csv(file.path(picasso_path, "results", "contract_search_states.csv"))
+cont_smry_df <- read_csv(file.path(picasso_path, "results", "contract_search_empi_step_summary.csv"))
+cont_smry_df <- cont_smry_df %>% 
+  mutate(diff_burst = loc_burst - date_burst)
+
+# state_size <- cont_states %>%
+#   mutate(across(contains("dim"), ~ . ^2)) %>%
+#   rowSums() %>%
+#   as.vector() %>%
+#   sqrt()
+# 
+# trimmed_state1 <- cont_states[-1,]
+# trimmed_state2 <- cont_states[-nrow(cont_states),]
+# 
+# dot_pca <- rowSums(trimmed_state1*trimmed_state2) %>% as.vector()
+# size_product <- state_size[-1]*state_size[-length(state_size)]
+#   
+# cstep_sizes <- (1 - dot_pca/size_product)/2
+N.logistic <- function(t, k, L, L2, t0) L2 + (L/(1 + exp(-k*(t - t0))))
+
+cont_smry_df$t <- 1:nrow(cont_smry_df)
+lmodel <- nls(cstep_avg ~ N.logistic(t, k, L, L2, t0), data = cont_smry_df, 
+              start = list(k = -0.01, L = 0.25, L2 = 0.2, t0 = 50))
+cont_smry_df$cstep_pred <- predict(lmodel)
+
+cont_step_plot <- cont_smry_df %>% 
+  ggplot(aes(x = start_date, y = cstep_avg)) +
+  geom_line() +
+  geom_line(aes(y = cstep_pred), color = "blue", linewidth = 1) +
+  xlab("time (year)") +
+  scale_y_continuous(name = expression(Delta*"("*s[t]*","*s[t+1]*")"),
+                     limits=c(0.15,0.3)) +
+  theme_classic() +
+  theme(axis.title=element_text(size=14),
+        plot.margin = unit(c(0,0.1,0,0.1), "cm"))
+
+cont_dim_plot <- cont_smry_df %>% 
+  ggplot(aes(x=start_date, dim90)) +
+  geom_line() +
+  geom_smooth(method = "lm") +
+  xlab("time (year)") +
+  scale_y_continuous("Dimensionality", limits=c(15,30)) +
+  theme_classic() +
+  theme(axis.title=element_text(size=14),
+        plot.margin = unit(c(0,0.1,0,0.1), "cm"))
+
+cont_burst_plot <- cont_smry_df %>% 
+  ggplot(aes(x=start_date, loc_burst)) +
+  geom_line() +
+  geom_smooth(method = "lm") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  xlab("time (year)") +
+  scale_y_continuous(limits=c(-1,1)) +
+  theme_classic() +
+  theme(axis.title.y=element_blank())
+
+cont_hburst_plot <- cont_smry_df %>% 
+  ggplot(aes(x=loc_burst)) +
+  geom_histogram(bins=40) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_continuous("Burstiness", limits=c(-1,1)) +
+  ylab("frequency") +
+  theme_classic() +
+  theme(axis.title=element_text(size=14),
+        plot.margin = unit(c(0,0.1,0,0.1), "cm"))
+
+plot_grid(
+  cont_step_plot, cont_dim_plot, cont_hburst_plot,
+  ncol = 3
+)
+```
+
+
+### Area-restricted search
+
+```{r}
+# ars_states <- read_csv(file.path(picasso_path, "results", "ars_search_states.csv"))
+ars_smry_df <- read_csv(file.path(picasso_path, "results", "ars40switch_search_empi_step_summary.csv"))
+ars_smry_df <- ars_smry_df %>% 
+  mutate(diff_burst = loc_burst - date_burst)
+
+# state_size <- ars_states %>%
+#   mutate(across(contains("dim"), ~ . ^2)) %>%
+#   rowSums() %>%
+#   as.vector() %>%
+#   sqrt()
+# 
+# trimmed_state1 <- ars_states[-1,]
+# trimmed_state2 <- ars_states[-nrow(ars_states),]
+# 
+# dot_pca <- rowSums(trimmed_state1*trimmed_state2) %>% as.vector()
+# size_product <- state_size[-1]*state_size[-length(state_size)]
+#   
+# cstep_sizes <- (1 - dot_pca/size_product)/2
+
+ars_step_plot <- ars_smry_df %>% 
+  ggplot(aes(x = start_date, y = cstep_avg)) +
+  geom_line() +
+  geom_smooth(method = "lm") +
+  xlab("time (year)") +
+  scale_y_continuous(name = expression(Delta*"("*s[t]*","*s[t+1]*")"),
+                     limits=c(0.15,0.3)) +
+  theme_classic() +
+  theme(axis.title=element_text(size=14),
+        plot.margin = unit(c(0,0.1,0,0.1), "cm"))
+
+ars_dim_plot <- ars_smry_df %>% 
+  ggplot(aes(x=start_date, dim90)) +
+  geom_line() +
+  geom_smooth(method = "lm") +
+  xlab("time (year)") +
+  scale_y_continuous("Dimensionality", limits=c(15,30)) +
+  theme_classic() +
+  theme(axis.title=element_text(size=14),
+        plot.margin = unit(c(0,0.1,0,0.1), "cm"))
+
+# ars_burst_plot <- ars_smry_df %>% 
+#   ggplot(aes(x=start_date, loc_burst)) +
+#   geom_line() +
+#   geom_smooth(method = "lm") +
+#   xlab("time (year)") +
+#   geom_hline(yintercept = 0, linetype = "dashed") +
+#   scale_y_continuous(limits=c(-1,1)) +
+#   theme_classic() +
+#   theme(axis.title.y=element_blank())
+
+ars_hburst_plot <- ars_smry_df %>% 
+  ggplot(aes(x=loc_burst)) +
+  geom_histogram(bins=40) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_continuous("Burstiness", limits=c(-1,1)) +
+  ylab("frequency") +
+  theme_classic() +
+  theme(axis.title=element_text(size=14),
+        plot.margin = unit(c(0,0.1,0,0.1), "cm"))
+
+plot_grid(
+  ars_step_plot, ars_dim_plot, ars_hburst_plot,
+  ncol = 3
+)
+```
+
+### Creating titles and labels
+
+```{r}
+# Row and column titles
+
+cstep_title <- ggdraw() + 
+  draw_label(
+    "Stylistic\nChange",
+    fontface = 'bold',
+    size = 16,
+    x = 0.55,
+    hjust = 0.5,
+    angle = 0
+  )
+
+dim_title <- ggdraw() + 
+  draw_label(
+    "Style Manifold\nDimensionality",
+    fontface = 'bold',
+    size = 16,
+    x = 0.55,
+    hjust = 0.5,
+    angle = 0
+  )
+
+burst_title <- ggdraw() + 
+  draw_label(
+    "Burstiness of\nStylistic Change",
+    fontface = 'bold',
+    size = 16,
+    x = 0.55,
+    hjust = 0.5,
+    angle = 0
+  )
+
+
+# plot labels
+
+fig2_blabel <- ggdraw() + 
+  draw_label(
+    "b",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.2,
+    hjust = 0, vjust = 0
+  )
+
+fig2_clabel <- ggdraw() + 
+  draw_label(
+    "c",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.2,
+    hjust = 0, vjust = 0
+  )
+
+fig2_dlabel <- ggdraw() + 
+  draw_label(
+    "d",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.2,
+    hjust = 0, vjust = 0
+  )
+
+fig2_flabel <- ggdraw() + 
+  draw_label(
+    "f",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.2,
+    hjust = 0, vjust = 0
+  )
+
+fig2_glabel <- ggdraw() + 
+  draw_label(
+    "g",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.2,
+    hjust = 0, vjust = 0
+  )
+
+fig2_hlabel <- ggdraw() + 
+  draw_label(
+    "h",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.2,
+    hjust = 0, vjust = 0
+  )
+
+fig2_jlabel <- ggdraw() + 
+  draw_label(
+    "j",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.2,
+    hjust = 0, vjust = 0
+  )
+
+fig2_klabel <- ggdraw() + 
+  draw_label(
+    "k",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.2,
+    hjust = 0, vjust = 0
+  )
+
+fig2_llabel <- ggdraw() + 
+  draw_label(
+    "l",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.2,
+    hjust = 0, vjust = 0
+  )
+```
+
+
+### Combining model plots
+
+```{r}
+model_result_title <- plot_grid(
+  cstep_title, dim_title, burst_title,
+  ncol = 3
+)
+
+model_result_grid <- plot_grid(
+  fig2_blabel, fig2_clabel, fig2_dlabel,
+  ars_step_plot, ars_dim_plot, ars_hburst_plot,
+  fig2_flabel, fig2_glabel, fig2_hlabel,
+  cont_step_plot, cont_dim_plot, cont_hburst_plot,
+  fig2_jlabel, fig2_klabel, fig2_llabel,
+  exp_step_plot, exp_dim_plot, exp_hburst_plot,
+  ncol = 3, rel_heights = c(0.1, 1, 0.1, 1, 0.1, 1),
+  rel_widths = c(1, 1, 1)
+)
+
+ars_grid <- plot_grid(
+  fig2_blabel, fig2_clabel, fig2_dlabel,
+  ars_step_plot, ars_dim_plot, ars_hburst_plot,
+  ncols = 3, rel_heights = c(0.1, 1)
+)
+
+cont_grid <- plot_grid(
+  fig2_flabel, fig2_glabel, fig2_hlabel,
+  cont_step_plot, cont_dim_plot, cont_hburst_plot,
+  ncols = 3, rel_heights = c(0.1, 1)
+)
+
+exp_grid <- plot_grid(
+  fig2_jlabel, fig2_klabel, fig2_llabel,
+  exp_step_plot, exp_dim_plot, exp_hburst_plot,
+  ncols = 3, rel_heights = c(0.1, 1)
+)
+
+plot_grid(
+  model_result_title,
+  ars_grid, cont_grid, exp_grid,
+  ncol = 1, rel_heights = c(0.1, 1, 1, 1)
+)
+# ggsave("img/model_result_plots.jpg", width = 12, height = 9)
+```
+
+## Combining plots
+
+```{r}
+# plot_grid(
+#   NA, axis.gg, model_result_title,
+#   model_title, mvt_sample_plot, model_result_grid,
+#   ncol = 3, rel_widths = c(0.1, 1, 1), rel_heights = c(0.2, 1)
+# )
+header <- plot_grid(axis.gg, cstep_title, dim_title, burst_title,
+                    ncol = 4, rel_widths = c(0.9, 0.3, 0.3, 0.3))
+
+ars_rowlabel <- plot_grid(fig2_alabel, NA, NA, fig2_blabel, fig2_clabel, fig2_dlabel, ncol = 6)
+ars_row <- plot_grid(ars_first_phase, ars_second_phase, ars_third_phase, ars_step_plot, ars_dim_plot, ars_hburst_plot, ncol = 6, align = "h")
+
+cont_rowlabel <- plot_grid(fig2_elabel, NA, NA, fig2_flabel, fig2_glabel, fig2_hlabel, ncol = 6)
+cont_row <- plot_grid(cont_first_phase, cont_second_phase, cont_third_phase, cont_step_plot, cont_dim_plot, cont_hburst_plot, ncol = 6, align = "h")
+
+exp_rowlabel <- plot_grid(fig2_ilabel, NA, NA, fig2_jlabel, fig2_klabel, fig2_llabel, ncol = 6)
+exp_row <- plot_grid(exp_first_phase, exp_second_phase, exp_third_phase, exp_step_plot, exp_dim_plot, exp_hburst_plot, ncol = 6, align = "h")
+
+
+tmp <- plot_grid(ars_rowlabel, ars_row, cont_rowlabel, cont_row, exp_rowlabel, exp_row,
+                 ncol = 1, rel_heights = c(0.1, 1, 0.1, 1, 0.1, 1))
+
+column <- plot_grid(NA, ars_title, NA, cont_title, NA, exp_title,
+                    ncol = 1, rel_heights = c(0.1, 1, 0.1, 1, 0.1, 1))
+
+plot_grid(NA, header,
+          column, tmp, ncol = 2,
+          rel_widths = c(0.07, 1),
+          rel_heights = c(0.1, 1))
+
+
+# plot_grid(
+#   NA, axis.gg, model_result_title,
+#   ars_title, ars_phase_grid, ars_grid,
+#   NA, NA, NA,
+#   cont_title, cont_phase_grid, cont_grid,
+#   NA, NA, NA,
+#   exp_title, exp_phase_grid, exp_grid,
+#   ncol = 3, rel_widths = c(0.1, 1, 1),
+#   rel_heights = c(0.25, 1, 0.1, 1, 0.1, 1)
+# )
+
+# plot_grid(ars_grid, cont_grid, exp_grid, ncol = 1)
+# 
+# padded_ars_grid <- plot_grid(NA, ars_grid, ncol = 1, rel_heights = c(0.1,1))
+# plot_grid(ars_phase_grid, ars_grid, ncol = 2)
+# plot_grid(ars_first_phase, ars_step_plot, ncol = 2)
+
+ggsave("img/picasso_fig2.jpg", width = 14, height = 8)
+```
+
+
+# Figure 3
+
+## Heatmap and density plots
+
+```{r}
+ordered_df <- full_df %>% 
+  left_join(art_data %>% select(opp, dayStart, dateStart),
+            by = "opp") %>% 
+  filter(monthStart != 0, dayStart != 0) %>% 
+  arrange(yearStart, monthStart, dayStart) %>% 
+  select(dateStart, low_pc1:high_pc100)
+
+
+# daily level movements
+d_ordered_pca <- ordered_df %>% 
+  group_by(dateStart) %>% 
+  summarize(across(contains("_pc"), mean), .groups = "drop") %>% 
+  select(-dateStart)
+
+trimmed_pca1 <- d_ordered_pca[-1,] # remove the first row
+trimmed_pca2 <- d_ordered_pca[-nrow(d_ordered_pca),] # remove the last row
+
+## Cosine step sizes
+abs_step_sizes <- d_ordered_pca %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+dot_pca <- rowSums(trimmed_pca1*trimmed_pca2)
+size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+
+d_step_sizes <- (1 - dot_pca/size_product)/2
+
+## Directional changes (cosine similarity)
+mvt_df <- trimmed_pca1 - trimmed_pca2
+
+trimmed_mvt1 <- mvt_df[-1,] # remove the first row
+trimmed_mvt2 <- mvt_df[-nrow(mvt_df),] # remove the last row
+
+### Euclidean distance of the step
+abs_step_sizes <- mvt_df %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+dot_pca <- rowSums(trimmed_mvt1*trimmed_mvt2)
+size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+
+d_cos_sims <- dot_pca/size_product
+
+
+# Null model
+
+# shuffle date column and arrange dataframe
+shuff_df <- full_df %>% 
+  left_join(art_data %>% select(opp, dayStart, dateStart),
+            by = "opp") %>% 
+  filter(monthStart != 0, dayStart != 0) %>% 
+  transform(dateStart = sample(dateStart)) %>% 
+  arrange(dateStart) %>% 
+  select(dateStart, low_pc1:high_pc100)
+
+shuff_df %>% head()
+
+# daily level movements
+d_ordered_pca <- shuff_df %>% 
+  group_by(dateStart) %>% 
+  summarize(across(contains("_pc"), mean), .groups = "drop") %>% 
+  select(-dateStart)
+
+trimmed_pca1 <- d_ordered_pca[-1,] # remove the first row
+trimmed_pca2 <- d_ordered_pca[-nrow(d_ordered_pca),] # remove the last row
+
+## Cosine step sizes
+abs_step_sizes <- d_ordered_pca %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+dot_pca <- rowSums(trimmed_pca1*trimmed_pca2)
+size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+
+nd_step_sizes <- (1 - dot_pca/size_product)/2
+
+## Directional changes (cosine similarity)
+mvt_df <- trimmed_pca1 - trimmed_pca2
+
+trimmed_mvt1 <- mvt_df[-1,] # remove the first row
+trimmed_mvt2 <- mvt_df[-nrow(mvt_df),] # remove the last row
+
+### Euclidean distance of the step
+abs_step_sizes <- mvt_df %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+dot_pca <- rowSums(trimmed_mvt1*trimmed_mvt2)
+size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+
+nd_cos_sims <- dot_pca/size_product
+```
+
+### Combine plots
+
+```{r}
+library(ks)
+
+df <- tibble(step_size = d_step_sizes[2:length(d_step_sizes)], cos_sim = d_cos_sims)
+
+df.probs1 <- ks::kde(df,
+                     xmin=c(0, -1),
+                     xmax=c(+1, +1))
+
+kde_matrix1 <- df.probs1$estimate
+
+rownames(kde_matrix1) <- df.probs1$eval.points[[1]]
+colnames(kde_matrix1) <- df.probs1$eval.points[[2]]
+
+kde_tb1 <- reshape2::melt(kde_matrix1) %>%
+  rename(step_size = Var1, cos_sim = Var2)
+
+heatmap_plot <- kde_tb1 %>% ggplot(aes(x=step_size, y=cos_sim)) + 
+  geom_tile(aes(fill=value)) +
+  geom_contour(aes(z=value),
+               color="black",
+               breaks = c(0.4, 1, 1.8, 2.4)) +
+  scale_x_continuous(name = expression("Stylistic Change, "*Delta*"("*s[t]*","*s[t+1]*")"), expand=c(0,0)) +
+  scale_y_continuous(name = expression("Direction Change, "*tau*"("*v[t]*","*v[t+1]*")"), expand=c(0,0)) +
+  scale_fill_gradient(name = "Density", low = "blue", high = "red") +
+  theme_classic() +
+  theme(legend.position = "none",
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title=element_text(size=14),
+        panel.border = element_rect(colour = "black",
+                                    fill=NA, linewidth=3))
+
+cstep_density <- data.frame(d_step_sizes) %>% 
+  ggplot(aes(x = d_step_sizes)) +
+  geom_histogram(aes(y=..density..), bins=50) +
+  geom_density() +
+  scale_x_continuous(name="", limits=c(0,1), expand = c(0,0), breaks = NULL) +
+  ylab("") +
+  theme_classic() +
+  theme(axis.title=element_text(size=14),
+        axis.title.x = element_blank(),
+        plot.margin = margin(l = 12,
+                             r = 8,
+                             b = 2))
+
+turn_density <- data.frame(d_cos_sims) %>% 
+  ggplot(aes(y = d_cos_sims)) +
+  geom_histogram(aes(x=..density..), bins=50) +
+  geom_density() +
+  scale_y_continuous(limits=c(-1,1), expand = c(0,0), breaks = NULL) +
+  xlab("") +
+  theme_classic() +
+  theme(axis.title=element_text(size=14),
+        axis.title.y = element_blank(),
+        plot.margin = margin(b = 9,
+                             t = 7,
+                             l = 4))
+
+mvt_density_plot <- plot_grid(
+  cstep_density, NULL, heatmap_plot, turn_density,
+  rel_widths = c(4, 1),
+  rel_heights = c(1, 4),
+  ncol = 2
+)
+
+mvt_density_plot
+
+# ggsave("img/picasso_fig3.jpg", width = 8, height = 8)
+```
+
+
+
+## Visual similarity by temporal distance
+
+```{r}
+vissim_by_tempdist <- read_csv(file.path(picasso_path, "results",
+                                         "vissim_by_tempdist.csv"))
+
+
+vertical_breaks <- tibble(name = c("day","week", "month", "year","decade"),
+                          days = c(1, 7, 30, 365, 365*10))
+
+vissim_tempd_plot <- vissim_by_tempdist %>% 
+  filter(period_end >= (1/365)-0.0001) %>% # at least a day apart
+  filter(period_end <=20) %>%
+  filter(n > 0) %>%
+  ggplot(aes(x=period_end*365, y = cos_sim_both_m)) + 
+  # geom_line() + 
+  geom_point() +
+  geom_smooth(
+    data=vissim_by_tempdist %>% filter(period_end > 1/365, period_end <= 10),
+    method="lm", se=F, formula = y ~ x, color = "lightblue") + 
+  geom_vline(data=vertical_breaks, aes(xintercept = days), linetype='dashed', color='red') + 
+  annotate(geom = "text", x = vertical_breaks$days *.8,
+           label = vertical_breaks$name, y=.05,
+           color="red", size=5, hjust = 0,
+           angle = 90) +
+  annotation_logticks(sides = "b") +
+  scale_x_continuous("time between paintings (days)", trans="log2",
+                     breaks = c(1, 10, 100, 1000),
+                     minor_breaks = c(seq(2, 9, 1),
+                                      seq(20, 90, 10),
+                                      seq(200, 900, 100))
+  ) +
+  scale_y_log10("stylistic similarity",
+                breaks = seq(0.01, .25, .01),
+                labels = c(rep("", 4), sprintf("%.2f", .05), 
+                           rep("", 4), sprintf("%.2f", .10),  
+                           rep("", 4), sprintf("%.2f", .15),  
+                           rep("", 4), sprintf("%.2f", .20), 
+                           rep("", 4), sprintf("%.2f", .25)),
+                limits = c(.045, .215), expand = c(0,0),
+  ) +
+  theme_classic(base_size = 14)
+
+ggsave(file.path("img", "picasso_vissim_tempdist.jpg"),
+       width = 8, height = 6)
+```
+
+## Sliding window results
+
+### Stylistic steps
+
+```{r}
+slidw_df <- read_csv(file.path(picasso_path, "results",
+                               "slide_window5y_burst1m_2.csv"))
+slidw_df <- slidw_df %>% 
+  filter(start_date >= "1900-01-01")
+
+# majorPeriodOnset <- majorPeriodOnset %>% 
+#   mutate(month = ceiling(12 * ((yearMonthStart+.001) - 
+#                                floor(yearMonthStart))),
+#          year = floor(yearMonthStart),
+#          day = "1", 
+#          yearMonthDay = paste(year, month, day, sep="-")) %>%
+#   rowwise() %>%
+#   mutate(start_date = ymd(yearMonthDay))
+# 
+# majorPeriodOnset <- majorPeriodOnset %>%
+#   left_join(slidw_df %>% select(start_date, cstep_avg))
+
+# sliding window visualizations
+
+N.logistic <- function(t, k, L, t0) L/(1 + exp(-k*(t - t0)))
+
+slidw_df$t <- 1:nrow(slidw_df)
+lmodel <- nls(cstep_avg ~ N.logistic(t, k, L, t0), data = slidw_df, 
+              start = list(k = 0.5, L = 0.5, t0 = 50))
+slidw_df$cstep_pred <- predict(lmodel)
+
+cstep_slidw_plot <- slidw_df %>% 
+  ggplot(aes(x = start_date, y = cstep_avg)) +
+  geom_line() +
+  geom_line(aes(y = cstep_pred), color = "blue", linewidth = 1) +
+  xlab("time (year)") +
+  scale_y_continuous(name = expression("Stylistic Change, "*Delta*"("*s[t]*","*s[t+1]*")")) +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.title=element_text(size=14))
+```
+
+### Stylistic dimensionality
+
+```{r}
+year_window <- 5
+style_dim.df <- read_csv(file.path(picasso_path, "results",
+                                   paste0("slide_window", year_window, "y_artdim1m.csv")))
+style_dim.df <- style_dim.df %>% 
+  filter(dateStart >= "1900-01-01")
+
+
+dim_slidw_plot <- style_dim.df %>% 
+  ggplot(aes(x=dateStart, y=dim90)) +
+  geom_line() +
+  # geom_vline(xintercept = ymd("1900-08-01"), color = "red") +
+  theme_classic() +
+  geom_smooth(method="lm") +
+  ylim(24, 34) +
+  xlab("time (year)") +
+  ylab("Style Manifold Dimensionality") +
+  theme(axis.title=element_text(size=14))
+```
+
+### Burstiness
+
+```{r}
+slidw_df <- slidw_df %>% 
+  mutate(rescaled_loc_burst = (loc_burst + 1) / 2,
+         rescaled_date_burst = (date_burst + 1) / 2,
+         adjust_burst = log(rescaled_loc_burst / rescaled_date_burst),
+         diff_burst = loc_burst - date_burst)
+
+slidw_df$adjust_burst[is.infinite(slidw_df$adjust_burst)] <- NA
+
+slidw_df %>% 
+  summarize(avg_loc_burst = mean(rescaled_loc_burst, na.rm = T),
+            avg_date_burst = mean(rescaled_date_burst, na.rm = T),
+            mean_adj_burst = mean(adjust_burst, na.rm = T)) %>% 
+  mutate(adjust_avg_burst = avg_loc_burst / avg_date_burst)
+
+# date_burst_plot <- slidw_df %>% 
+#   ggplot(aes(x=start_date, y=date_burst)) +
+#   geom_line() +
+#   xlab("time (year)") +
+#   scale_y_continuous(name="B(activity)", limits=c(-1,1)) +
+#   geom_smooth(method="lm") +
+#   theme_classic()
+# 
+# burst_plot <- slidw_df %>% 
+#   ggplot(aes(x=start_date, y=loc_burst)) +
+#   geom_line() +
+#   xlab("time (year)") +
+#   scale_y_continuous(name="B(stylistic movement)", limits=c(-1,1)) +
+#   geom_smooth(method="lm") +
+#   theme_classic()
+
+# ggsave(file.path("img", "slidw5y_step1m_loc1sd_burstiness.png"),
+#        width = 12, height = 6)
+
+histburst_plot <- slidw_df %>% 
+  ggplot(aes(x=loc_burst)) +
+  geom_histogram(bins = 100) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  scale_x_continuous(name="Burstiness", limits=c(-1,1)) +
+  scale_y_continuous(expand = c(0,0)) +
+  ylab("frequency") +
+  theme_classic() +
+  theme(axis.title=element_text(size=14))
+
+diff_burst_plot <- slidw_df %>% 
+  ggplot(aes(x=start_date, y=diff_burst)) +
+  geom_line() +
+  xlab("time (year)") +
+  scale_y_continuous(name="B(stylistic movement) - B(activity)", limits=c(-2,2)) +
+  geom_smooth(method="lm") +
+  theme_classic()
+```
+
+## Combining plots
+
+```{r}
+fig4_alabel <- ggdraw() + 
+  draw_label(
+    "a",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+fig4_blabel <- ggdraw() + 
+  draw_label(
+    "b",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+fig4_clabel <- ggdraw() + 
+  draw_label(
+    "c",
+    fontface = 'bold',
+    size = 12,
+    x = 0.01, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+fig4_dlabel <- ggdraw() + 
+  draw_label(
+    "d",
+    fontface = 'bold',
+    size = 12,
+    x = 0.01, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+fig4_elabel <- ggdraw() + 
+  draw_label(
+    "e",
+    fontface = 'bold',
+    size = 12,
+    x = 0.01, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+fig4_flabel <- ggdraw() + 
+  draw_label(
+    "f",
+    fontface = 'bold',
+    size = 12,
+    x = 0.01, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+timescale_file <- file.path("img", "timescale_figure.jpg")
+timescale_draw <- ggdraw() +
+  draw_image(
+    timescale_file, scale = 1
+  )
+
+slide_plots <- plot_grid(
+  fig4_clabel, mvt_density_plot,
+  fig4_clabel, cstep_slidw_plot,
+  fig4_dlabel, dim_slidw_plot,
+  fig4_elabel, histburst_plot,
+  ncol = 1, rel_heights = c(0.1, 1, 0.1, 1, 0.1, 1, 0.1, 1)
+) + theme(panel.border = element_rect(color = "black",
+                                      fill = NA,
+                                      size = 2))
+
+slide_plots.2 <- plot_grid(
+  fig4_clabel, fig4_dlabel,
+  mvt_density_plot, cstep_slidw_plot,
+  fig4_elabel, fig4_flabel,
+  dim_slidw_plot, histburst_plot,
+  ncol = 2, rel_heights = c(0.1, 1, 0.1, 1)
+) + theme(panel.border = element_rect(color = "black",
+                                      fill = NA,
+                                      size = 2))
+ 
+cumstep_gridplot <- plot_grid(
+  fig4_alabel, timescale_draw, fig4_blabel, vissim_tempd_plot,
+  ncol = 1, rel_heights = c(0.1, 1, 0.05, 1)
+)
+
+plot_grid(
+  cumstep_gridplot, NA, slide_plots.2,
+  ncol = 3, rel_widths = c(0.7, 0.025, 1)
+)
+
+ggsave("img/picasso_fig4.jpg", width = 14, height = 8)
+```
+
+
+# Supplemtal Figures
+
+## Burstiness
+
+```{r}
+slidw_df <- read_csv(file.path(picasso_path, "results",
+                               "slide_window5y_burst1m_2.csv"))
+slidw_df <- slidw_df %>% 
+  filter(start_date >= "1900-01-01")
+
+slidw_df <- slidw_df %>% 
+  mutate(rescaled_loc_burst = (loc_burst + 1) / 2,
+         rescaled_date_burst = (date_burst + 1) / 2,
+         adjust_burst = log(rescaled_loc_burst / rescaled_date_burst),
+         diff_burst = loc_burst - date_burst)
+
+slidw_df$adjust_burst[is.infinite(slidw_df$adjust_burst)] <- NA
+
+slidw_df %>% 
+  summarize(avg_loc_burst = mean(rescaled_loc_burst, na.rm = T),
+            avg_date_burst = mean(rescaled_date_burst, na.rm = T),
+            mean_adj_burst = mean(adjust_burst, na.rm = T)) %>% 
+  mutate(adjust_avg_burst = avg_loc_burst / avg_date_burst)
+
+# date_burst_plot <- slidw_df %>% 
+#   ggplot(aes(x=start_date, y=date_burst)) +
+#   geom_line() +
+#   xlab("time (year)") +
+#   scale_y_continuous(name="B(activity)", limits=c(-1,1)) +
+#   geom_smooth(method="lm") +
+#   theme_classic()
+# 
+
+histburst_plot <- slidw_df %>% 
+  ggplot(aes(x=loc_burst)) +
+  geom_histogram(bins = 100) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  scale_x_continuous(name="Burstiness", limits=c(-1,1)) +
+  scale_y_continuous(expand = c(0,0)) +
+  ylab("frequency") +
+  theme_classic() +
+  theme(axis.title=element_text(size=14))
+
+burst_plot <- slidw_df %>%
+  ggplot(aes(x=start_date, y=loc_burst)) +
+  geom_line() +
+  xlab("time (year)") +
+  scale_y_continuous(name="Burstiness", limits=c(-1,1)) +
+  geom_smooth(method="lm") +
+  theme_classic() +
+  theme(axis.title=element_text(size=14))
+
+
+sfig1_alabel <- ggdraw() + 
+  draw_label(
+    "a",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+sfig1_blabel <- ggdraw() + 
+  draw_label(
+    "b",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+plot_grid(
+  sfig1_alabel, sfig1_blabel,
+  burst_plot, histburst_plot,
+  ncol = 2, rel_widths = c(1, 1),
+  rel_heights = c(0.1, 1)
+)
+
+ggsave(file.path("img", "supp_fig1.jpg"),
+       width = 12, height = 5)
+
+t.test(slidw_df$loc_burst)
+sd(slidw_df$loc_burst)
+slidw_df$t <- (1:nrow(slidw_df) - 1)
+slidw_df$t_end <- slidw_df$t - nrow(slidw_df)
+b.m1 <- lm(loc_burst ~ 1 + t, data=slidw_df)
+summary(b.m1)
+
+b.m.end <- lm(loc_burst ~ 1 + t_end, data=slidw_df)
+summary(b.m.end)
+```
+
+## Day-to-day steps vs Null
+
+```{r}
+source("mvt_analysis.R")
+
+ordered_df <- full_df %>% 
+  left_join(art_data %>% select(opp, dayStart, dateStart),
+            by = "opp") %>% 
+  filter(monthStart != 0, dayStart != 0) %>% 
+  arrange(yearStart, monthStart, dayStart) %>% 
+  select(dateStart, low_pc1:high_pc100)
+
+
+# daily level movements
+d_ordered_pca <- ordered_df %>% 
+  group_by(dateStart) %>% 
+  summarize(across(contains("_pc"), mean), .groups = "drop") %>% 
+  select(-dateStart)
+
+trimmed_pca1 <- d_ordered_pca[-1,] # remove the first row
+trimmed_pca2 <- d_ordered_pca[-nrow(d_ordered_pca),] # remove the last row
+
+## Cosine step sizes
+abs_step_sizes <- d_ordered_pca %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+dot_pca <- rowSums(trimmed_pca1*trimmed_pca2)
+size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+
+d_step_sizes <- (1 - dot_pca/size_product)/2
+
+## Directional changes (cosine similarity)
+mvt_df <- trimmed_pca1 - trimmed_pca2
+
+trimmed_mvt1 <- mvt_df[-1,] # remove the first row
+trimmed_mvt2 <- mvt_df[-nrow(mvt_df),] # remove the last row
+
+### Euclidean distance of the step
+abs_step_sizes <- mvt_df %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+dot_pca <- rowSums(trimmed_mvt1*trimmed_mvt2)
+size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+
+d_cos_sims <- dot_pca/size_product
+
+
+# Null model
+
+# shuffle date column and arrange dataframe
+shuff_df <- full_df %>% 
+  left_join(art_data %>% select(opp, dayStart, dateStart),
+            by = "opp") %>% 
+  filter(monthStart != 0, dayStart != 0) %>% 
+  transform(dateStart = sample(dateStart)) %>% 
+  arrange(dateStart) %>% 
+  select(dateStart, low_pc1:high_pc100)
+
+shuff_df %>% head()
+
+# daily level movements
+d_ordered_pca <- shuff_df %>% 
+  group_by(dateStart) %>% 
+  summarize(across(contains("_pc"), mean), .groups = "drop") %>% 
+  select(-dateStart)
+
+trimmed_pca1 <- d_ordered_pca[-1,] # remove the first row
+trimmed_pca2 <- d_ordered_pca[-nrow(d_ordered_pca),] # remove the last row
+
+## Cosine step sizes
+abs_step_sizes <- d_ordered_pca %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+dot_pca <- rowSums(trimmed_pca1*trimmed_pca2)
+size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+
+nd_step_sizes <- (1 - dot_pca/size_product)/2
+
+## Directional changes (cosine similarity)
+mvt_df <- trimmed_pca1 - trimmed_pca2
+
+trimmed_mvt1 <- mvt_df[-1,] # remove the first row
+trimmed_mvt2 <- mvt_df[-nrow(mvt_df),] # remove the last row
+
+### Euclidean distance of the step
+abs_step_sizes <- mvt_df %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+dot_pca <- rowSums(trimmed_mvt1*trimmed_mvt2)
+size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+
+nd_cos_sims <- dot_pca/size_product
+
+
+# Aggregate day-to-day step statistics vs null
+
+mean_step <- c(mean(d_step_sizes), mean(nd_step_sizes))
+step_se <- c(stderror(d_step_sizes), stderror(nd_step_sizes))
+
+mean_cossim <- c(mean(d_cos_sims), mean(nd_cos_sims))
+cossim_se <- c(stderror(d_cos_sims), stderror(nd_cos_sims))
+
+source <- c("real", "null")
+
+summary_df <- data.frame(step_size = mean_step,
+                         step_se = step_se,
+                         cos_sim = mean_cossim,
+                         cossim_se = cossim_se,
+                         source = source)
+
+
+# dot and whisker plot
+
+dw_plot <- summary_df %>% 
+  ggplot(aes(x = step_size, y = cos_sim, color = source)) +
+  geom_point(size=2) +
+  geom_errorbar(aes(ymin = cos_sim - cossim_se,
+                    ymax = cos_sim + cossim_se),
+                width = 0.005) +
+  geom_errorbarh(aes(xmin = step_size - step_se,
+                     xmax = step_size + step_se),
+                 height = 0.0025) +
+  scale_x_continuous(name = expression("Stylistic Change, "*Delta*"("*s[t]*","*s[t+1]*")")) +
+  scale_y_continuous(name = expression("Direction Change, "*tau*"("*v[t]*","*v[t+1]*")")) +
+  theme_classic(base_size = 14)
+
+ggsave(paste0("img/supp_fig2.jpg"),
+       width = 8, height = 6)
+```
+
