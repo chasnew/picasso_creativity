@@ -19,6 +19,12 @@ library(patchwork)
 
 home_dir <- path.expand("~")
 picasso_path <- file.path(home_dir, "Library/CloudStorage/Box-Box/QuantifyingPicasso")
+van_gogh_path <- file.path(picasso_path, "van_gogh")
+vg_data_path <- file.path(van_gogh_path, "van_gogh_data")
+
+artist <- "picasso"
+
+cbPalette <- c('#999999', '#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2', '#D55E00', '#CC79A7')
 ```
 
 # Data loading
@@ -101,13 +107,18 @@ majorPeriodOnset <- tibble(period = c("Blue",
 # Load PCA results
 
 ```{r}
-feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
 target_cat <- "painting"
 feature_model <- "resnet"
 
-full_df <- fread(file.path(feature_path, paste0("pca_", target_cat, "_", feature_model, ".csv"))) %>% 
-  as.data.frame()
-
+if (artist == "picasso") {
+  feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
+  
+  full_df <- fread(file.path(feature_path, paste0("pca_", target_cat, "_", feature_model, ".csv"))) %>% 
+    as.data.frame()
+} else {
+  full_df <- fread(file.path(vg_data_path, paste0("pca_", feature_model, ".csv"))) %>% 
+    as.data.frame()
+}
 # Separate low-level and high-level features for analyses
 low_cols <- str_detect(colnames(full_df), "low")
 low_features <- full_df[low_cols]
@@ -124,6 +135,17 @@ full_features <- full_df[full_pc_cols]
 ```{r}
 library(Rtsne)
 
+set.seed(176)
+
+# normalizing embedding vectors for clustering based on cosine similarity
+embedding_size <- full_features %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+norm_full_df <- (full_features / embedding_size)
+
 # t-SNE analysis
 low_tsne <- low_features %>% Rtsne(perplexity = 30, pca = FALSE)
 low_tsne <- low_tsne$Y %>% as.data.frame() %>% rename(low_tsne1 = "V1", low_tsne2 = "V2")
@@ -131,17 +153,27 @@ low_tsne <- low_tsne$Y %>% as.data.frame() %>% rename(low_tsne1 = "V1", low_tsne
 high_tsne <- high_features %>% Rtsne(perplexity = 30, pca = FALSE)
 high_tsne <- high_tsne$Y %>% as.data.frame() %>% rename(high_tsne1 = "V1", high_tsne2 = "V2")
 
-full_tsne <- full_features %>% Rtsne(perplexity = 30, pca = FALSE)
+full_tsne <- norm_full_df %>% Rtsne(perplexity = 30, pca = FALSE)
 full_tsne <- full_tsne$Y %>% as.data.frame() %>% rename(full_tsne1 = "V1", full_tsne2 = "V2")
 
 full_df <- cbind(full_df, low_tsne, high_tsne, full_tsne)
+
+if (artist == "van_gogh") {
+  full_df <- full_df %>% 
+    rename('yearMonthStart' = 'year')
+}
+
+# full_df %>%
+#   select(opp, full_tsne1, full_tsne2) %>%
+#   write_csv(file.path(picasso_path, "results",
+#                       "cstep_full_tsne.csv"))
 ```
 
 ## PCA-TSNE Visualization
 
 ```{r}
 # PCA
-ggplot(data = full_df, aes(x = low_pc1, y = low_pc2, label = opp, color = yearMonthStart)) +
+ggplot(data = full_df, aes(x = low_pc1, y = low_pc2, color = yearMonthStart)) +
   geom_point() +
   # geom_text_repel(size = 2.5) +
   scale_color_gradient2(midpoint = median(full_df$yearMonthStart), mid = "grey90") +
@@ -149,14 +181,14 @@ ggplot(data = full_df, aes(x = low_pc1, y = low_pc2, label = opp, color = yearMo
   labs(title = "low-level PCA results") +
   theme_classic()
 
-ggplot(data = full_df, aes(x = high_pc1, y = high_pc2, label = opp, color = yearMonthStart)) +
+ggplot(data = full_df, aes(x = high_pc1, y = high_pc2, color = yearMonthStart)) +
   geom_point() +
   # geom_text_repel(size = 2.5) +
   scale_color_gradient2(midpoint = median(full_df$yearMonthStart), mid = "grey90") +
   labs(title = "high-level PCA results") +
   theme_classic()
 
-ggplot(data = full_df, aes(x = low_pc1, y = high_pc1, label = opp, color = yearMonthStart)) +
+ggplot(data = full_df, aes(x = low_pc1, y = high_pc1, color = yearMonthStart)) +
   geom_point() +
   # geom_text_repel(size = 2.5) +
   scale_color_gradient2(midpoint = median(full_df$yearMonthStart), mid = "grey90") +
@@ -164,78 +196,141 @@ ggplot(data = full_df, aes(x = low_pc1, y = high_pc1, label = opp, color = yearM
   theme_classic()
 
 # t-SNE
-ggplot(data = full_df, aes(x = low_tsne1, y = low_tsne2, label = opp, color = yearMonthStart)) +
+ggplot(data = full_df, aes(x = low_tsne1, y = low_tsne2, color = yearMonthStart)) +
   geom_point() +
   # geom_text_repel(size = 2.5) +
   scale_color_gradient2(midpoint = median(full_df$yearMonthStart), mid = "grey90") +
   labs(title = "low-level tSNE results") +
   theme_classic()
 
-ggplot(data = full_df, aes(x = high_tsne1, y = high_tsne2, label = opp, color = yearMonthStart)) +
+ggsave(paste0("img/low_tsne_", feature_model, "_", artist, ".png"))
+
+ggplot(data = full_df, aes(x = high_tsne1, y = high_tsne2, color = yearMonthStart)) +
   geom_point() +
   # geom_text_repel(size = 2.5) +
   scale_color_gradient2(midpoint = median(full_df$yearMonthStart), mid = "grey90") +
   labs(title = "high-level tSNE results") +
   theme_classic()
 
-ggplot(data = full_df, aes(x = full_tsne1, y = full_tsne2, label = opp, color = yearMonthStart)) +
+ggsave(paste0("img/high_tsne_", feature_model, "_", artist, ".png"))
+
+ggplot(data = full_df, aes(x = full_tsne1, y = full_tsne2)) +
   geom_point() +
-  # geom_text_repel(size = 2.5) +
-  scale_color_gradient2(midpoint = median(full_df$yearMonthStart), mid = "grey90") +
-  # scale_color_gradientn(colors = rainbow(7)) +
   labs(title = "full tSNE results") +
   theme_classic()
 
-ggsave(paste0("img/full_tsne_", feature_model, "_artviz.png"))
+ggsave(paste0("img/full_tsne_", feature_model, "_", artist, ".png"))
 
 # visualize a cluster across levels
-# clust1 <- full_df %>% 
-#   filter(full_tsne1 > 0, full_tsne1 < 6, full_tsne2 <-20) %>% 
-#   select(opp)
-#   
-# ggplot(data = full_df, aes(x = low_tsne1, y = low_tsne2, label = opp, color = opp %in% clust1$opp)) +
-#   geom_point() +
-#   labs(title = "low-level tSNE results") +
-#   theme_classic()
-# 
-# ggplot(data = full_df, aes(x = high_tsne1, y = high_tsne2, label = opp, color = opp %in% clust1$opp)) +
-#   geom_point() +
-#   labs(title = "high-level tSNE results") +
-#   theme_classic()
+low_clust <- full_df %>%
+  filter(low_tsne1 > 20, low_tsne2 < -10) %>%
+  select(opp)
+
+print(low_clust)
+
+ggplot(data = full_df, aes(x = low_tsne1, y = low_tsne2, label = opp, color = opp %in% low_clust$opp)) +
+  geom_point() +
+  labs(title = "low-level tSNE results") +
+  theme_classic()
+
+high_clust <- full_df %>%
+  filter(high_tsne1 < -38, high_tsne2 < -8) %>%
+  select(opp)
+
+print(high_clust)
+
+ggplot(data = full_df, aes(x = high_tsne1, y = high_tsne2, label = opp, color = opp %in% high_clust$opp)) +
+  geom_point() +
+  labs(title = "high-level tSNE results") +
+  theme_classic()
+
+clust1 <- full_df %>%
+  filter(full_tsne1 < -25, full_tsne2 > 7, full_tsne2 < 12) %>%
+  select(opp)
+
+clust2 <- full_df %>%
+  filter(full_tsne1 > 25, full_tsne2 > 9, full_tsne2 < 13) %>%
+  select(opp)
+
+clust3 <- full_df %>%
+  filter(full_tsne1 > -12, full_tsne1 < -8, full_tsne2 < -34) %>%
+  select(opp)
+
+print(clust1)
+print(clust2)
+print(clust3)
+
+combined_clust <- data.frame(opp = c(clust1$opp, clust2$opp, clust3$opp))
+
+select_clust <- c("OPP.33:054", "OPP.33:153", "OPP.39:023", "OPP.56:008",
+                  "OPP.02:023", "OPP.21:029")
+# select_clust <- c("OPP.47:032", "OPP.24:141", "OPP.09:169", "OPP.54:531",
+#                   "OPP.33:054", "OPP.33:153", "OPP.39:023", "OPP.56:008")
+
+full_df %>%
+  filter(opp %in% select_clust) %>% 
+  select(opp, full_tsne1, full_tsne2)
+
+ggplot(data = full_df %>% filter(!opp %in% select_clust), aes(x = full_tsne1, y = full_tsne2, label = opp)) +
+  geom_point(alpha = 0.3) +
+  geom_point(data = full_df %>% filter(opp %in% select_clust), color = "red") +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.title=element_blank(),
+        axis.text=element_blank(),
+        axis.ticks=element_blank(),
+        panel.grid = element_blank(),
+        panel.border = element_rect(linewidth = 2))
+
+# ggsave(paste0("img/full_costsne_", feature_model, "_", artist, "_pair.png"),
+#        width = 6, height = 6)
 
 # Artistic walk
-agg_tsne <- full_df %>% 
-  group_by(yearStart) %>% 
-  summarize(low_tsne1_m = mean(low_tsne1), low_tsne2_m = mean(low_tsne2),
-            high_tsne1_m = mean(high_tsne1), high_tsne2_m = mean(high_tsne2),
-            full_tsne1_m = mean(full_tsne1), full_tsne2_m = mean(full_tsne2))
+# agg_tsne <- full_df %>% 
+#   group_by(yearStart) %>% 
+#   summarize(low_tsne1_m = mean(low_tsne1), low_tsne2_m = mean(low_tsne2),
+#             high_tsne1_m = mean(high_tsne1), high_tsne2_m = mean(high_tsne2),
+#             full_tsne1_m = mean(full_tsne1), full_tsne2_m = mean(full_tsne2))
+# 
+# agg_tsne %>% 
+#   ggplot(aes(x = low_tsne1_m, y = low_tsne2_m, color = yearStart)) +
+#   geom_path() +
+#   geom_point(aes(shape = yearStart > 1912)) +
+#   scale_color_gradientn(colors = rainbow(7)) +
+#   labs(title = "low tSNE results") +
+#   theme_classic()
+# 
+# agg_tsne %>% 
+#   ggplot(aes(x = high_tsne1_m, y = high_tsne2_m, color = yearStart)) +
+#   geom_path() +
+#   geom_point(aes(shape = yearStart > 1912)) +
+#   scale_color_gradientn(colors = rainbow(7)) +
+#   labs(title = "high tSNE results") +
+#   theme_classic()
+# 
+# agg_tsne %>% 
+#   ggplot(aes(x = full_tsne1_m, y = full_tsne2_m, color = yearStart)) +
+#   geom_path() +
+#   geom_point() +
+#   scale_color_gradient2(midpoint = median(full_df$yearMonthStart), mid = "grey90") +
+#   # scale_color_gradientn(colors = rainbow(7)) +
+#   labs(title = "full tSNE results") +
+#   theme_classic()
+# 
+# ggsave(paste0("img/full_tsne_", feature_model, "_", artist, "_movement.png"))
 
-agg_tsne %>% 
-  ggplot(aes(x = low_tsne1_m, y = low_tsne2_m, color = yearStart)) +
-  geom_path() +
-  geom_point(aes(shape = yearStart > 1912)) +
-  scale_color_gradientn(colors = rainbow(7)) +
-  labs(title = "low tSNE results") +
-  theme_classic()
+tmp <- full_df %>% 
+  left_join(art_data %>% select(opp, dayStart, dateStart),
+            by = "opp") %>% 
+  filter(monthStart != 0, dayStart != 0) %>% 
+  arrange(yearStart, monthStart, dayStart) %>% 
+  select(opp, yearStart, dateStart, low_pc1:high_pc100)
 
-agg_tsne %>% 
-  ggplot(aes(x = high_tsne1_m, y = high_tsne2_m, color = yearStart)) +
-  geom_path() +
-  geom_point(aes(shape = yearStart > 1912)) +
-  scale_color_gradientn(colors = rainbow(7)) +
-  labs(title = "high tSNE results") +
-  theme_classic()
 
-agg_tsne %>% 
-  ggplot(aes(x = full_tsne1_m, y = full_tsne2_m, color = yearStart)) +
-  geom_path() +
-  geom_point() +
-  scale_color_gradient2(midpoint = median(full_df$yearMonthStart), mid = "grey90") +
-  # scale_color_gradientn(colors = rainbow(7)) +
-  labs(title = "full tSNE results") +
-  theme_classic()
-
-ggsave(paste0("img/full_tsne_", feature_model, "_artistic_movement.png"))
+tmp %>% 
+  filter(yearStart == 1971) %>% 
+  arrange(dateStart) %>% 
+  select(opp, dateStart)
 ```
 
 The resnet outlier (opp.68:659) is more of a drawing instead of a painting.
@@ -264,13 +359,14 @@ library(cluster)
 # should test the robustness of centroid numbers (calculating within cluster variations)
 low_kmeans <- kmeans(low_features, centers = 200, iter.max = 100, nstart = 25)
 high_kmeans <- kmeans(high_features, centers = 200, iter.max = 100, nstart = 25)
-full_kmeans <- kmeans(full_features, centers = 200, iter.max = 100, nstart = 25)
+full_kmeans <- kmeans(norm_full_df, centers = 200, iter.max = 100, nstart = 25)
 
 clust_df <- data.frame(low_clust = as.factor(low_kmeans$cluster),
                        high_clust = as.factor(high_kmeans$cluster),
                        full_clust = as.factor(full_kmeans$cluster))
 
 full_df <- cbind(full_df, clust_df)
+norm_full_df <- cbind(norm_full_df, clust_df)
 
 # sample artworks from each cluster
 hclust_samples <- full_df %>%
@@ -281,9 +377,11 @@ hclust_samples <- full_df %>%
 fclust_samples <- full_df %>% 
   group_by(full_clust) %>% 
   slice_sample(n = 10) %>% 
-  select(opp, high_clust, title, low_pc1, high_pc1)
+  select(opp, full_clust, title, low_pc1, high_pc1)
 
 hclust_samples
+
+full_kmeans$withinss
 fclust_samples
 
 # cluster sample visualization
@@ -342,11 +440,11 @@ pairwise_df <- data.frame(opp1 = rep(ordered_opp, each = length(ordered_opp)),
                           opp2 = rep(ordered_opp, times = length(ordered_opp)))
 
 pairwise_df <- pairwise_df %>% 
-  left_join(paintings %>% select(opp, yearMonthStart), by = c("opp1" = "opp")) %>% 
-  rename(yearMonthStart1 = yearMonthStart) %>% 
-  left_join(paintings %>% select(opp, yearMonthStart), by = c("opp2" = "opp")) %>% 
-  rename(yearMonthStart2 = yearMonthStart) %>% 
-  mutate(yearMonthStartDiff = abs(yearMonthStart1 - yearMonthStart2))
+  left_join(paintings %>% select(opp, dateStart), by = c("opp1" = "opp")) %>% 
+  rename(dateStart1 = dateStart) %>% 
+  left_join(paintings %>% select(opp, dateStart), by = c("opp2" = "opp")) %>% 
+  rename(dateStart2 = dateStart) %>% 
+  mutate(dateStartDiff = dateStart2 - dateStart1)
 
 # full-PCA similarity matrices
 pairwise_df$cos_sim <- ordered_df %>% 
@@ -385,7 +483,7 @@ pairwise_df %>%
 ggsave(file.path("img", "full_euclid_dist_heatmap.png"))
 
 # low-level PCA similarity matrices
-pairwise_df$cos_sim <- ordered_df %>% 
+pairwise_df$low_cos_sim <- ordered_df %>% 
   select(contains("low_pc")) %>% 
   as.matrix() %>% 
   cossim.dist() %>% 
@@ -421,7 +519,7 @@ pairwise_df %>%
 ggsave(file.path("img", "low_euclid_dist_heatmap.png"))
 
 # high-level PCA similarity matrics
-pairwise_df$cos_sim <- ordered_df %>% 
+pairwise_df$high_cos_sim <- ordered_df %>% 
   select(contains("high_pc")) %>% 
   as.matrix() %>% 
   cossim.dist() %>% 
@@ -511,6 +609,349 @@ daily_pair_df %>%
 
 ggsave(file.path("img", "daily_full_eucdist_heatmap.png"))
 ```
+
+### local distance over time (painting pairwise)
+
+```{r}
+local_dist_df <- pairwise_df %>%
+  filter(opp1 != opp2, dateStartDiff >= 0, dateStartDiff < 60) %>% 
+  mutate(yearStart = year(dateStart1), monthStart = month(dateStart1),
+         step_size = (1 - cos_sim)/2) %>% 
+  group_by(yearStart, monthStart) %>% 
+  summarize(step_size = mean(step_size)) %>% 
+  mutate(dateStart = ymd(paste0(yearStart, "/", monthStart, "/", 1)))
+
+local_dist_df %>%   
+  ggplot(aes(x=dateStart, y=step_size)) +
+  geom_point() +
+  geom_line() +
+  theme_classic()
+
+ggsave("img/local60d_stepsize.png", width = 12, height = 7)
+```
+
+### distance of varying intervals
+
+```{r}
+max_day_diff <- as.integer(max(pairwise_df$dateStartDiff))
+
+intv_dist_df <- pairwise_df %>%
+  filter(opp1 != opp2) %>% 
+  mutate(step_size = (1 - cos_sim)/2,
+         dateStartDiff = abs(dateStartDiff)) %>% 
+  group_by(dateStartDiff) %>% 
+  summarize(step_size = mean(step_size))
+
+intv_dist_df %>%   
+  ggplot(aes(x=dateStartDiff, y=step_size)) +
+  geom_point() +
+  geom_line() +
+  theme_classic()
+
+ggsave("img/varintv_stepsize.png", width = 12, height = 7)
+```
+
+### distance of cumulative intervals
+
+```{r}
+# create pairwise stylistic diff dataframe without duplicate pairs
+
+samedate_df <- pairwise_df %>%
+    filter(opp1 != opp2, dateStartDiff == 0)
+
+unique_samedates <- samedate_df$dateStart1 %>% unique()
+nodup_samedates <- NA
+
+# remove duplicates of artwork-pair that are on the same date
+for (i in 1:length(unique_samedates)) {
+  print(unique_samedates[i])
+  tmp_samedates <- samedate_df %>% 
+    filter(dateStart1 == unique_samedates[i])
+  
+  opp_pairlist <- c()
+  bool_masks <- c()
+  for (j in 1:nrow(tmp_samedates)) {
+    
+    row <- tmp_samedates[j,]
+    opp_pair <- paste0(row$opp1, "-", row$opp2)
+    compare_opp <- paste0(row$opp2, "-", row$opp1)
+    
+    if (compare_opp %in% opp_pairlist) {
+      bool_masks <- c(bool_masks, FALSE)
+    } else {
+      opp_pairlist <- c(opp_pairlist, opp_pair)
+      bool_masks <- c(bool_masks, TRUE)
+    }
+  }
+  
+  if (all(is.na(nodup_samedates))) {
+    nodup_samedates <- tmp_samedates[bool_masks,]
+  } else {
+    nodup_samedates <- bind_rows(nodup_samedates,
+                                 tmp_samedates[bool_masks,])
+  }
+}
+
+# combine non-duplicate 0 date df with original pair df excluding 0 date pairs
+nodup_pair_df <- nodup_samedates %>% 
+  bind_rows(pairwise_df %>% filter(dateStartDiff > 0))
+
+# write_csv(nodup_pair_df,
+#           file.path(picasso_path, "results",
+#                     "nodup_pair_cossim.csv"))
+```
+
+
+```{r}
+library(zoo)
+
+nodup_pair_df <- read_csv(file.path(picasso_path, "results",
+                                    "nodup_pair_cossim.csv"))
+
+intv_dist_df <- nodup_pair_df %>%
+  mutate(cstep = (1 - cos_sim)/2) %>% 
+  group_by(dateStartDiff) %>% 
+  summarize(cstep = sum(cstep),
+            count = n())
+
+cum_interval_df <- intv_dist_df %>% 
+  mutate(cum_cstep = cumsum(cstep),
+         cum_n = cumsum(count),
+         cstep_avg = cum_cstep / cum_n) %>% 
+  select(dateStartDiff, cstep_avg)
+
+cum_interval_df %>% 
+  ggplot(aes(x = dateStartDiff, y = cstep_avg)) +
+  geom_point() +
+  scale_x_continuous(name = "t (days)", trans="log10",
+                     breaks = intv_dist_df$dateStartDiff) +
+  theme_classic()
+
+cum_interval_df$dateStartDiff <- as.numeric(cum_interval_df$dateStartDiff)
+
+write_csv(cum_interval_df,
+          file.path(picasso_path, "results",
+                    "cum_cstep_intervals.csv"))
+
+
+
+# nodup_pair_df %>% 
+#   filter(dateStartDiff == 1, dateStart1 > "1965-01-01")
+```
+
+### log-scale w/ sliding window
+
+Create overlapping logorithmic bins: 
+
+```{r}
+nodup_pair_df <- nodup_pair_df %>% 
+  mutate(yearStartDiff = dateStartDiff / 365)
+
+select_pair_df <- nodup_pair_df %>% 
+  filter(dateStartDiff > 0)
+
+cosSim_by_tempDist2 <- tibble()
+time_bins2 <- 10^(seq(log10(1/365), log10(70), .1)) # 70 years on log10 scale
+# time_bins2 <- time_bins2 - min(time_bins2)
+# time_bins2*365
+overlapping_bins <- 3
+time_bins2 <- c(rep(0,overlapping_bins-1), time_bins2)
+
+for(bini in (overlapping_bins):length(time_bins2)){
+  cat(paste(bini, "/", length(time_bins2), ", ", sep = ""))
+  
+  lower_bin <- time_bins2[bini-(overlapping_bins-1)]
+  upper_bin <- time_bins2[bini]
+  
+  # for some reasons 10^log10(1/365) != 1/365 (and also for 2/365)
+  if (bini == 5) {
+    lower_bin <- lower_bin - 0.0001
+  } else if (bini == 6) {
+    upper_bin <- upper_bin + 0.0001
+  }
+  
+  cosSim_by_tempDisti <- select_pair_df %>%
+    filter(yearStartDiff >= lower_bin,
+           yearStartDiff <= upper_bin) %>%
+    ungroup() %>%
+    summarize(cos_sim_both_m = mean(cos_sim),
+              cos_sim_both_sd = sd(cos_sim),
+              n = n()) %>%
+    mutate(period_start = time_bins2[bini-(overlapping_bins-1)],
+           period_end = time_bins2[bini])
+  cosSim_by_tempDist2 <- bind_rows(cosSim_by_tempDist2, cosSim_by_tempDisti)
+}
+
+cosSim_by_tempDist2 <- cosSim_by_tempDist2 %>%
+  mutate(vis_sim = (cos_sim_both_m + 1)/2)
+
+write_csv(cosSim_by_tempDist2,
+          file.path(picasso_path, "results",
+                    "vissim_by_tempdist.csv"))
+```
+
+```{r}
+vertical_breaks <- tibble(name = c("day","week", "month", "year","decade"),
+                          days = c(1, 7, 30, 365, 365*10))
+
+cosSim_by_tempDist2 %>% 
+  filter(period_end > 1/365) %>% # at least a day apart
+  filter(period_end <=20) %>%
+  filter(n > 0) %>%
+  ggplot(aes(x=period_end*365, y = cos_sim_both_m)) + 
+  # geom_line() + 
+  geom_point(aes(
+    # size = n
+  )) +
+  geom_smooth(
+    data=cosSim_by_tempDist2 %>% filter(period_end > 1/365, period_end <= 10),
+    method="lm", se=F, formula = y ~ x, color = "lightblue") + 
+  # geom_line(aes(y = cos_sim_high_m), color="red") + 
+  # geom_point(aes(y = cos_sim_high_m), color="red") +
+  # geom_line(aes(y = cos_sim_low_m), color="blue") + 
+  # geom_point(aes(y = cos_sim_low_m), color="blue") +
+  geom_vline(data=vertical_breaks, aes(xintercept = days), linetype='dashed', color='red') + 
+  annotate(geom = "text", x = vertical_breaks$days *.8,
+           label = vertical_breaks$name, y=.05,
+           color="red", size=5, hjust = 0,
+           angle = 90) +
+  annotation_logticks(sides = "b") +
+  scale_x_log10("time (days)", breaks = c(1, 10, 100, 1000),
+                minor_breaks = c(seq(2, 9, 1),
+                                 seq(20, 90, 10),
+                                 seq(200, 900, 100))
+  ) +
+  scale_y_log10("visual similarity",
+                breaks = seq(0.01, .25, .01),
+                labels = c(rep("", 4), sprintf("%.2f", .05), 
+                           rep("", 4), sprintf("%.2f", .10),  
+                           rep("", 4), sprintf("%.2f", .10),  
+                           rep("", 4), sprintf("%.2f", .20), 
+                           rep("", 4), sprintf("%.2f", .25)),
+                limits = c(.045, .215), expand = c(0,0),
+  ) +
+  theme_classic(base_size = 15)
+```
+
+
+```{r}
+nodup_pair_df <- nodup_pair_df %>% 
+  mutate(vis_sim = (cos_sim + 1)/2)
+
+cor.test(nodup_pair_df$dateStartDiff, nodup_pair_df$vis_sim)
+```
+
+
+### Null model
+
+```{r}
+shuff_pair_df <- nodup_pair_df %>% 
+  transform(dateStartDiff = sample(dateStartDiff))
+
+cum_ninterval_df <- shuff_pair_df %>% 
+  mutate(cstep = (1 - cos_sim)/2) %>% 
+  group_by(dateStartDiff) %>% 
+  summarize(cstep = sum(cstep),
+            count = n()) %>% 
+  mutate(cum_cstep = cumsum(cstep),
+         cum_n = cumsum(count),
+         cstep_avg = cum_cstep / cum_n) %>% 
+  select(dateStartDiff, cstep_avg)
+
+cum_ninterval_df %>% 
+  ggplot(aes(x = dateStartDiff, y = cstep_avg)) +
+  geom_point() +
+  theme_classic()
+
+write_csv(cum_ninterval_df,
+          file.path(picasso_path, "results",
+                    "cum_nullcstep_intervals.csv"))
+```
+
+```{r}
+cum_interval_df <- read_csv(file.path(picasso_path, "results",
+                                      "cum_cstep_intervals.csv"))
+
+cum_ninterval_df <- read_csv(file.path(picasso_path, "results",
+                                       "cum_nullcstep_intervals.csv"))
+
+cum_interval_df$source <- "real data"
+cum_ninterval_df$source <- "null data"
+
+combined_results <- bind_rows(cum_interval_df, cum_ninterval_df)
+
+combined_results %>% 
+  ggplot(aes(x = dateStartDiff, y = cstep_avg, color = source)) +
+  geom_line() +
+  scale_color_manual(values = cbPalette) +
+  scale_y_continuous(limits=c(0,0.5)) +
+  theme_classic()
+
+ggsave(file.path("img", "picasso_vs_null_cumcstep_interval.png"),
+       width = 10, height = 6)
+
+
+cum_interval_df %>% 
+  ggplot(aes(x = dateStartDiff, y = cstep_avg)) +
+  geom_line() +
+  geom_smooth(method='lm', formula= y~x) +
+  scale_color_manual(values = cbPalette) +
+  scale_y_continuous(limits=c(0.2,0.5)) +
+  theme_classic()
+```
+
+### Statistical test
+
+```{r}
+library(brms)
+
+nodup_pair_df <- read_csv(file.path(picasso_path, "results",
+                                    "nodup_pair_cossim.csv")) %>% 
+  mutate(cstep = (1 - cos_sim)/2,
+         vis_sim = (cos_sim + 1)/2)
+
+# nodup_pair_df %>% 
+#   ggplot(aes(x=dateStartDiff, y=cstep)) +
+#   geom_point() +
+#   theme_classic()
+
+# cumintvl_prior <- c(
+#   prior(normal(0, 1), class = Intercept),
+#   prior(normal(0, 0.5), class = b, coef = dateStartDiff),
+#   prior(exponential(1), class = sigma)
+# )
+# 
+# brm_cumintvl <- brm(cstep ~ 1 + dateStartDiff,
+#             data = nodup_pair_df,
+#             family = gaussian(),
+#             prior = cumintvl_prior,
+#             iter = 2000,
+#             chains = 4,
+#             cores = 4,
+#             warmup = 1000,
+#             save_pars = save_pars(all = TRUE))
+# 
+# plot(brm_cumintvl)
+
+cor.test(nodup_pair_df$dateStartDiff, nodup_pair_df$vis_sim)
+
+tsep_model <- lm(cstep ~ 1 + dateStartDiff, data = nodup_pair_df)
+summary(tsep_model)
+
+agg_interval_df <- nodup_pair_df %>% 
+  group_by(dateStartDiff) %>% 
+  summarize(cstep_avg = mean(cstep))
+
+tmp_df <- data.frame(dateStartDiff = seq(0, 28363))
+agg_interval_df$pred <- predict(tsep_model, tmp_df)
+
+agg_interval_df %>% 
+  ggplot(aes(x = dateStartDiff, y = cstep_avg)) +
+  geom_point(alpha = 0.5) +
+  geom_line(aes(y = pred), color = "blue", size = 2) +
+  theme_classic()
+```
+
 
 ### Foote Novelty calculation
 
@@ -648,10 +1089,11 @@ foote_df <- read_csv(file.path(picasso_path, "results", "foote_step1m_ker12m.csv
 # smoothing
 foote_df <- foote_df %>% 
   mutate(foote_ma = ma(foote_novelty, n = 15),
-         foote_gaus = smth.gaussian(foote_novelty, window = 15))
+         foote_gaus = smth.gaussian(foote_novelty, window = 60),
+         foote_gaus2 = smth.gaussian(foote_novelty, window = 12))
 
 # local maxima detection
-foote_secdiv <- diff(sign(diff(foote_df$foote_novelty))) # second derivative
+foote_secdiv <- diff(sign(diff(foote_df$foote_gaus))) # second derivative
 foote_locmax <- foote_secdiv==-2 # positive slope followed by negative slope
 foote_df$locmax <- c(FALSE, foote_locmax, FALSE)
 
@@ -659,9 +1101,10 @@ foote_df$locmax <- c(FALSE, foote_locmax, FALSE)
 foote_df %>% 
   filter(foote_novelty > 0) %>% 
   ggplot() +
-  geom_point(aes(x = date, y = foote_novelty)) +
-  geom_line(aes(x = date, y = foote_ma), color = "blue") +
-  geom_line(aes(x = date, y = foote_gaus), color = "orange")
+  # geom_point(aes(x = date, y = foote_novelty)) +
+  # geom_line(aes(x = date, y = foote_ma), color = "blue") +
+  geom_line(aes(x = date, y = foote_gaus), color = "orange") +
+  geom_line(aes(x= date, y = foote_gaus2), color = "blue")
 
 foote_df %>% 
   filter(foote_novelty > 0) %>% 
@@ -670,5 +1113,12 @@ foote_df %>%
                values_to = "foote_novelty") %>% 
   ggplot(aes(x = date, y = foote_novelty, color = smoother)) +
   geom_line(alpha = 0.5)
+
+locmax_dates <- foote_df %>% 
+  filter(locmax == TRUE) %>% 
+  select(date, foote_novelty, foote_gaus, locmax)
+
+write_csv(locmax_dates,
+          file.path(picasso_path, "results", "locmax_foote_dates.csv"))
 ```
 
