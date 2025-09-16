@@ -1,0 +1,654 @@
+---
+title: "Bob Ross Analysis"
+author: "Chanuwas (New) Aswamenakul"
+date: '2025-05-13'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(data.table)
+library(lubridate)
+library(stringr)
+library(entropy)
+library(rsample)
+library(cowplot)
+library(ggrepel)
+library(patchwork)
+
+home_dir <- path.expand("~")
+picasso_path <- file.path(home_dir, "Library/CloudStorage/Box-Box/QuantifyingPicasso")
+bob_ross_path <- file.path(picasso_path, "bob_ross")
+br_data_path <- file.path(bob_ross_path, "bob_ross_data")
+
+artist <- "bob_ross"
+
+cbPalette <- c('#999999', '#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2', '#D55E00', '#CC79A7')
+```
+
+
+# Load PCA results
+
+```{r}
+target_cat <- "painting"
+feature_model <- "resnet"
+
+full_df <- fread(file.path(br_data_path, paste0("pca_combined_", feature_model, ".csv"))) %>% 
+  as.data.frame()
+full_df$release_date <- as.Date(full_df$release_date)
+
+years <- full_df$year %>% unique()
+```
+
+
+# Movement characterization
+
+## Fixed coarse-graining
+
+```{r movement analysis}
+# daily level movements
+d_ordered_pca <- full_df %>% 
+  select(contains("_pc"))
+
+trimmed_pca1 <- d_ordered_pca[-1,] # remove the first row
+trimmed_pca2 <- d_ordered_pca[-nrow(d_ordered_pca),] # remove the last row
+
+## Cosine step sizes
+abs_step_sizes <- d_ordered_pca %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+dot_pca <- rowSums(trimmed_pca1*trimmed_pca2)
+size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+
+d_step_sizes <- (1 - dot_pca/size_product)/2
+
+## Directional changes (cosine similarity)
+mvt_df <- trimmed_pca1 - trimmed_pca2
+
+trimmed_mvt1 <- mvt_df[-1,] # remove the first row
+trimmed_mvt2 <- mvt_df[-nrow(mvt_df),] # remove the last row
+
+### Euclidean distance of the step
+abs_step_sizes <- mvt_df %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+dot_pca <- rowSums(trimmed_mvt1*trimmed_mvt2)
+size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+
+d_cos_sims <- dot_pca/size_product
+
+
+dstep_plot <- qplot(d_step_sizes, bins = 100) +
+  xlim(c(0, 1)) +
+  labs(title = "daily-level step size") +
+  theme_minimal() +
+  theme(axis.title.x=element_blank())
+
+# ggsave(paste0("img/cstep_size_dist_", feature_model, ".png"))
+
+# Visualizing cosine similarity
+csd_plot <- qplot(d_cos_sims, bins = 100) +
+  xlim(c(-1, 1)) +
+  xlab("cosine similarity") +
+  labs(title = "daily-level directional change") +
+  theme_minimal() +
+  theme(axis.title.x=element_blank())
+
+dstep_plot
+
+csd_plot
+```
+
+# Sliding windows analyses
+
+```{r}
+source("mvt_analysis.R")
+
+ordered_df <- full_df %>% 
+  arrange(release_date) %>% 
+  select(release_date, low_pc1:high_pc100)
+
+agg_pca <- ordered_df %>% 
+  group_by(release_date) %>% 
+  summarize(across(contains("_pc"), mean))
+
+year_window <- 5 # c(1:70)
+
+first_date <- ymd(19830111)
+last_date <- ymd(19940517)
+
+# (last_date - first_date) / 365
+
+window_size <- years(year_window)
+wstep_size <- months(1)
+
+wfirst_date <- first_date
+wlast_date <- first_date + window_size
+
+result_list <- list(cstep_avg = c(),
+                    cstep_sd = c(),
+                    loc_burst = c(),
+                    date_burst = c())
+
+start_date_seq <- seq(first_date, last_date - window_size + days(1), by = "1 month")
+end_date_seq <- seq(wlast_date, last_date, by = "1 month")
+
+while (wlast_date <= last_date) {
+  print(paste("start date =", wfirst_date))
+  
+  # filtering data using the window size
+  wagg_pca <- agg_pca %>% 
+    filter(release_date >= wfirst_date, release_date < wlast_date)
+  
+  # check if there's only one data point
+  if (nrow(wagg_pca) <= 1) {
+    result_list$cstep_avg <- c(result_list$cstep_avg, NA)
+    result_list$cstep_sd <- c(result_list$cstep_sd, NA)
+    result_list$loc_burst <- c(result_list$loc_burst, NA)
+    result_list$date_burst <- c(result_list$date_burst, NA)
+    
+    wfirst_date <- wfirst_date + wstep_size
+    wlast_date <- wlast_date + wstep_size
+    next
+  }
+  
+  trimmed_pca1 <- wagg_pca[-1,] # remove the first row
+  trimmed_pca2 <- wagg_pca[-nrow(wagg_pca),] # remove the last row
+  
+  # movement vectors
+  mvt_df <- trimmed_pca1 - trimmed_pca2
+  
+  ## Cosine step sizes
+  abs_step_sizes <- wagg_pca %>%
+    mutate(across(contains("_pc"), ~ . ^2)) %>%
+    select(contains("_pc")) %>%
+    rowSums() %>%
+    as.vector() %>%
+    sqrt()
+  
+  trimmed_pca1 <- trimmed_pca1 %>% select(-release_date)
+  trimmed_pca2 <- trimmed_pca2 %>% select(-release_date)
+  
+  dot_pca <- rowSums(trimmed_pca1*trimmed_pca2)
+  size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+  
+  cstep_sizes <- (1 - dot_pca/size_product)/2
+  
+  result_list$cstep_avg <- c(result_list$cstep_avg, mean(cstep_sizes))
+  result_list$cstep_sd <- c(result_list$cstep_sd, sd(cstep_sizes))
+  
+  # only calculate if there are at least 2 movement vectors
+  if (nrow(mvt_df) > 1) {
+    # 0 bigsteps will be NA
+    ## Burstiness
+    loc_threshold <- mean(cstep_sizes) + (1*sd(cstep_sizes))
+    
+    loc_bigstep <- detect_burst(cstep_sizes, thresh=loc_threshold, scale=F)
+    step_iei1 <- extract_iei(loc_bigstep)[-1]
+    
+    result_list$loc_burst <- c(result_list$loc_burst, burstiness(step_iei1))
+    
+    # date burstiness (days that Picasso started artworks)
+    avail_dates <- wagg_pca$release_date
+    tmp_date_seq <- seq(wfirst_date, wlast_date - days(1), by = "1 day")
+    
+    burst_inds <- match(avail_dates, tmp_date_seq)
+    date_burst <- rep(0, length(tmp_date_seq))
+    date_burst[burst_inds] <- 1
+    
+    date_burst <- as.logical(date_burst)
+    date_iei <- extract_iei(date_burst)[-1]
+    
+    result_list$date_burst <- c(result_list$date_burst, burstiness(date_iei))
+    
+  } else {
+    result_list$loc_burst <- c(result_list$loc_burst, NA)
+    result_list$date_burst <- c(result_list$date_burst, NA)
+  }
+  
+  wfirst_date <- wfirst_date + wstep_size
+  wlast_date <- wlast_date + wstep_size
+}
+
+slidw_df <- data.frame(result_list)
+slidw_df$start_date <- start_date_seq
+slidw_df$end_date <- end_date_seq
+
+slidw_df <- slidw_df[,c(5,6,1:4)]
+slidw_df
+
+write_csv(slidw_df,
+          file.path(picasso_path, "results",
+                    paste0("slide_br", year_window, "y_burst1m_3.csv")))
+```
+
+
+
+# Dimensionality analysis
+
+```{r setup, include=FALSE}
+full_df %>% 
+  group_by(year(release_date)) %>% 
+  summarize(art_num = n())
+
+reduced_df <- full_df %>% 
+  select(release_date, contains("_pc"))
+
+first_date <- ymd(19830111)
+last_date <- ymd(19940517)
+
+year_window <- 5
+
+window_size <- years(year_window)
+wstep_size <- months(1)
+
+wfirst_date <- first_date
+wlast_date <- first_date + window_size
+
+start_date_seq <- seq(first_date, last_date - window_size + months(1), by = "1 month")
+
+style_dim.df <- tibble()
+
+while (wlast_date <= last_date) {
+  print(paste("start date =", wfirst_date))
+  
+  full_df.subi <- reduced_df %>% 
+    filter(release_date >= wfirst_date, release_date < wlast_date) %>% 
+    select(-release_date)
+  
+  print(paste("number of rows =", nrow(full_df.subi)))
+  if (nrow(full_df.subi) > 0) {
+    full_df.subi.pca <- prcomp(full_df.subi %>% slice_sample(n=50))
+    cum.sdev.prop <- cumsum(full_df.subi.pca$sdev/sum(full_df.subi.pca$sdev))
+    
+    style_dim90 <- sum((cum.sdev.prop < .90)) + 1
+    style_dim75 <- sum((cum.sdev.prop < .75)) + 1
+    style_dim50 <- sum((cum.sdev.prop < .50)) + 1
+    style_dim.df <- bind_rows(style_dim.df, 
+                              tibble(release_date = wfirst_date,
+                                     n = nrow(full_df.subi),
+                                     dim50 = style_dim50,
+                                     dim75 = style_dim75,
+                                     dim90 = style_dim90))
+  } else {
+    style_dim.df <- bind_rows(style_dim.df, 
+                            tibble(release_date = wfirst_date,
+                                   n = 0,
+                                   dim50 = 0,
+                                   dim75 = 0,
+                                   dim90 = 0))
+  }
+  
+  wfirst_date <- wfirst_date + wstep_size
+  wlast_date <- wlast_date + wstep_size
+}
+
+# style_dim.df %>% filter(n < 20)
+
+write_csv(style_dim.df,
+          file.path(picasso_path, "results",
+                    paste0("slide_br", year_window, "y_artdim1m_3.csv")))
+```
+
+```{r}
+style_dim.df %>% 
+  pivot_longer(!year, names_to = "exp_sdev", values_to = "pca_count") %>% 
+  ggplot(aes(x=year, y=pca_count, color=exp_sdev)) +
+  geom_line() +
+  theme_classic()
+
+ggsave("img/explained_pca_sdev_br.png")
+
+
+style_dim.df %>% 
+  ggplot(aes(x=release_date, y=dim90)) +
+  geom_line() +
+  theme_classic() +
+  geom_smooth(method="lm")
+
+style_dim.df %>% 
+  summarize(avg_dim = mean(dim90))
+
+ggsave("img/pca1y_dim90_br.png", width = 12, height = 7)
+```
+
+
+
+# Pairwise similarity
+
+```{r}
+# source: https://stats.stackexchange.com/questions/31565/compute-a-cosine-dissimilarity-matrix-in-r
+cossim.dist <- function(df) {
+  df.matrix <- as.matrix(df)
+  cossim <- df.matrix / sqrt(rowSums(df.matrix * df.matrix))
+  cossim <- cossim %*% t(cossim)
+  return(cossim)
+}
+
+# rank-order (sort by opp)
+ordered_df <- full_df %>%
+  arrange(release_date, episode) %>% 
+  select(painting_index, low_pc1:high_pc100)
+
+ordered_pind <- ordered_df %>% 
+  pull(painting_index)
+
+pairwise_df <- data.frame(pind1 = rep(ordered_pind, each = length(ordered_pind)),
+                          pind2 = rep(ordered_pind, times = length(ordered_pind)))
+
+pairwise_df <- pairwise_df %>% 
+  left_join(full_df %>% select(painting_index, release_date), by = c("pind1" = "painting_index")) %>% 
+  rename(release_date1 = release_date) %>% 
+  left_join(full_df %>% select(painting_index, release_date), by = c("pind2" = "painting_index")) %>% 
+  rename(release_date2 = release_date) %>% 
+  mutate(dateDiff = release_date2 - release_date1)
+
+
+# full-PCA similarity matrices
+pairwise_df$cos_sim <- ordered_df %>% 
+  select(contains("_pc")) %>% 
+  as.matrix() %>% 
+  cossim.dist() %>% 
+  as.vector()
+
+# low-level PCA similarity matrices
+pairwise_df$low_cos_sim <- ordered_df %>% 
+  select(contains("low_pc")) %>% 
+  as.matrix() %>% 
+  cossim.dist() %>% 
+  as.vector()
+
+# high-level PCA similarity matrics
+pairwise_df$high_cos_sim <- ordered_df %>% 
+  select(contains("high_pc")) %>% 
+  as.matrix() %>% 
+  cossim.dist() %>% 
+  as.vector()
+
+# pairwise_df %>% 
+#   ggplot(aes(x = pind1, y = pind2)) +
+#   geom_raster(aes(fill = cos_sim)) +
+#   scale_fill_gradient2() +
+#   labs(title = "pairwise cosine similarity") +
+#   theme(axis.text.x=element_blank(),
+#         axis.text.y=element_blank(),
+#         axis.ticks = element_blank())
+
+# ggsave(file.path("img", "full_cos_similarity_heatmap.png"))
+```
+
+
+## distance of cumulative intervals
+
+```{r}
+# create pairwise stylistic diff dataframe without duplicate pairs
+
+samedate_df <- pairwise_df %>%
+    filter(pind1 != pind2, dateDiff == 0)
+
+unique_samedates <- samedate_df$release_date1 %>% unique()
+nodup_samedates <- NA
+
+# remove duplicates of artwork-pair that are on the same date
+for (i in 1:length(unique_samedates)) {
+  print(unique_samedates[i])
+  tmp_samedates <- samedate_df %>% 
+    filter(release_date1 == unique_samedates[i])
+  
+  pind_pairlist <- c()
+  bool_masks <- c()
+  for (j in 1:nrow(tmp_samedates)) {
+    
+    row <- tmp_samedates[j,]
+    pind_pair <- paste0(row$pind1, "-", row$pind2)
+    compare_pind <- paste0(row$pind2, "-", row$pind1)
+    
+    if (compare_pind %in% pind_pairlist) {
+      bool_masks <- c(bool_masks, FALSE)
+    } else {
+      pind_pairlist <- c(pind_pairlist, pind_pair)
+      bool_masks <- c(bool_masks, TRUE)
+    }
+  }
+  
+  if (all(is.na(nodup_samedates))) {
+    nodup_samedates <- tmp_samedates[bool_masks,]
+  } else {
+    nodup_samedates <- bind_rows(nodup_samedates,
+                                 tmp_samedates[bool_masks,])
+  }
+}
+
+# combine non-duplicate 0 date df with original pair df excluding 0 date pairs
+nodup_pair_df <- nodup_samedates %>% 
+  bind_rows(pairwise_df %>% filter(dateDiff > 0))
+
+write_csv(nodup_pair_df,
+          file.path(picasso_path, "results",
+                    "nodup_brpair_cossim_3.csv"))
+```
+
+
+```{r}
+library(zoo)
+
+nodup_pair_df <- read_csv(file.path(picasso_path, "results",
+                                    "nodup_brpair_cossim_3.csv"))
+
+# nodup_pair_df %>%
+#   mutate(cstep = (1 - cos_sim)/2) %>% 
+#   ggplot(aes(x=cstep)) +
+#   geom_histogram()
+
+intv_dist_df <- nodup_pair_df %>%
+  mutate(cstep = (1 - cos_sim)/2) %>%
+  group_by(dateDiff) %>%
+  summarize(cstep = sum(cstep),
+            count = n(),
+            cstep_avg = cstep / count)
+
+intv_dist_df %>% 
+  ggplot(aes(x = dateDiff, y = cstep_avg)) +
+  geom_point() +
+  scale_x_continuous(name = "t (days)") +
+  theme_classic()
+
+cum_interval_df <- intv_dist_df %>% 
+  mutate(cum_cstep = cumsum(cstep),
+         cum_n = cumsum(count),
+         cstep_avg = cum_cstep / cum_n) %>% 
+  select(dateDiff, cstep_avg)
+
+cum_interval_df %>% 
+  ggplot(aes(x = dateDiff, y = cstep_avg)) +
+  geom_point() +
+  scale_x_continuous(name = "t (days)") +
+  theme_classic()
+
+cum_interval_df$dateDiff <- as.numeric(cum_interval_df$dateDiff)
+
+# write_csv(cum_interval_df,
+#           file.path(picasso_path, "results",
+#                     "cum_cstep_brintervals.csv"))
+
+
+
+# nodup_pair_df %>% 
+#   filter(dateStartDiff == 1, dateStart1 > "1965-01-01")
+
+# nodup_pair_df %>%
+#   mutate(cstep = (1 - cos_sim)/2,
+#          low_cs = (1 - low_cos_sim)/2,
+#          high_cs = (1 - high_cos_sim)/2) %>% 
+#   filter(pind1 == 113, pind2 == 122) %>% 
+#   select(pind1, pind2, low_cs, high_cs, cstep)
+```
+
+### log-scale w/ sliding window
+
+Create overlapping logarithmic bins: 
+
+```{r}
+nodup_pair_df <- nodup_pair_df %>% 
+  mutate(yearDiff = dateDiff / 365)
+
+select_pair_df <- nodup_pair_df %>% 
+  filter(dateDiff >= 0)
+
+cosSim_by_tempDist2 <- tibble()
+time_bins2 <- 10^(seq(log10(1/365), log10(12), .1)) # 12 years on log10 scale
+# time_bins2 <- time_bins2 - min(time_bins2)
+# time_bins2*365
+overlapping_bins <- 3
+time_bins2 <- c(rep(0,overlapping_bins-1), time_bins2)
+
+for(bini in (overlapping_bins):length(time_bins2)){
+  cat(paste(bini, "/", length(time_bins2), ", ", sep = ""))
+  
+  lower_bin <- time_bins2[bini-(overlapping_bins-1)]
+  upper_bin <- time_bins2[bini]
+  
+  # for some reasons 10^log10(1/365) != 1/365 (and also for 2/365)
+  if (bini == 5) {
+    lower_bin <- lower_bin - 0.0001
+  } else if (bini == 6) {
+    upper_bin <- upper_bin + 0.0001
+  }
+  
+  cosSim_by_tempDisti <- select_pair_df %>%
+    filter(yearDiff >= lower_bin,
+           yearDiff <= upper_bin) %>%
+    ungroup() %>%
+    summarize(cos_sim_both_m = mean(cos_sim),
+              cos_sim_both_sd = sd(cos_sim),
+              n = n()) %>%
+    mutate(period_start = time_bins2[bini-(overlapping_bins-1)],
+           period_end = time_bins2[bini])
+  cosSim_by_tempDist2 <- bind_rows(cosSim_by_tempDist2, cosSim_by_tempDisti)
+}
+
+cosSim_by_tempDist2 <- cosSim_by_tempDist2 %>%
+  mutate(vis_sim = (cos_sim_both_m + 1)/2)
+
+
+write_csv(cosSim_by_tempDist2,
+          file.path(picasso_path, "results",
+                    "vissimbr_by_tempdist_3.csv"))
+```
+
+
+```{r}
+vertical_breaks <- tibble(name = c("day","week", "month", "year","decade"),
+                          days = c(1, 7, 30, 365, 365*10))
+
+cosSim_by_tempDist2 %>% 
+  filter(period_end >= (1/365)-0.0001) %>% # at least a day apart
+  filter(period_end <=15) %>%
+  filter(n > 0) %>%
+  ggplot(aes(x=period_end*365, y = cos_sim_both_m)) + 
+  # geom_line() + 
+  geom_point() +
+  # geom_smooth(
+  #   data=cosSim_by_tempDist2 %>% filter(period_end > 1/365, period_end <= 10),
+  #   method="lm", se=F, formula = y ~ x, color = "lightblue") + 
+  geom_vline(data=vertical_breaks, aes(xintercept = days), linetype='dashed', color='red') + 
+  annotate(geom = "text", x = vertical_breaks$days *.8,
+           label = vertical_breaks$name, y=-0.03,
+           color="red", size=5, hjust = 0,
+           angle = 90) +
+  annotation_logticks(sides = "b") +
+  scale_x_continuous("time between paintings (days)", trans="log2",
+                     breaks = c(1, 10, 100, 1000),
+                     minor_breaks = c(seq(2, 9, 1),
+                                      seq(20, 90, 10),
+                                      seq(200, 900, 100))
+  ) +
+  # scale_y_log10("stylistic similarity",
+  #               breaks = seq(0.01, .25, .01),
+  #               labels = c(rep("", 4), sprintf("%.2f", .05), 
+  #                          rep("", 4), sprintf("%.2f", .10),  
+  #                          rep("", 4), sprintf("%.2f", .15),  
+  #                          rep("", 4), sprintf("%.2f", .20), 
+  #                          rep("", 4), sprintf("%.2f", .25)),
+  #               limits = c(.045, .215), expand = c(0,0),
+  # ) +
+  theme_classic(base_size = 14)
+```
+
+
+# Clustering (sanity check)
+
+```{r}
+library(cluster)
+
+# normalizing embedding vectors for clustering based on cosine similarity
+embedding_size <- full_features %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+norm_full_df <- (full_features / embedding_size)
+
+# nstart: the number of initial random centroids to algorithmically solve for the best one
+# should test the robustness of centroid numbers (calculating within cluster variations)
+low_kmeans <- kmeans(low_features, centers = 50, iter.max = 100, nstart = 25)
+high_kmeans <- kmeans(high_features, centers = 50, iter.max = 100, nstart = 25)
+full_kmeans <- kmeans(norm_full_df, centers = 50, iter.max = 100, nstart = 25)
+
+clust_df <- data.frame(low_clust = as.factor(low_kmeans$cluster),
+                       high_clust = as.factor(high_kmeans$cluster),
+                       full_clust = as.factor(full_kmeans$cluster))
+
+
+full_df$low_clust <- clust_df$low_clust
+full_df$high_clust <- clust_df$high_clust
+full_df$full_clust <- clust_df$full_clust
+
+norm_full_df$full_clust <- clust_df$full_clust
+
+# sample artworks from each cluster
+lclust_samples <- full_df %>% 
+  group_by(low_clust) %>% 
+  slice_sample(n = 10) %>% 
+  select(painting_index, low_clust, low_pc1, low_pc2)
+
+hclust_samples <- full_df %>% 
+  group_by(high_clust) %>% 
+  slice_sample(n = 10) %>% 
+  select(painting_index, high_clust, high_pc1, high_pc2)
+
+fclust_samples <- full_df %>% 
+  group_by(full_clust) %>% 
+  slice_sample(n = 10) %>% 
+  select(painting_index, full_clust, low_pc1, high_pc1)
+
+full_kmeans$withinss
+fclust_samples
+
+low_kmeans$withinss
+lclust_samples
+
+high_kmeans$withinss
+hclust_samples
+
+full_df %>% 
+  filter(painting_index == 255) %>% 
+  select(painting_index, low_clust, high_clust, full_clust)
+
+
+full_df %>% 
+  filter(high_clust == 36) %>% 
+  select(painting_index, low_clust, high_clust, full_clust)
+```
+
