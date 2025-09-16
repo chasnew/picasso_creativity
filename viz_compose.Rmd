@@ -21,6 +21,8 @@ home_dir <- path.expand("~")
 picasso_path <- file.path(home_dir, "Library/CloudStorage/Box-Box/QuantifyingPicasso")
 van_gogh_path <- file.path(picasso_path, "van_gogh")
 vg_data_path <- file.path(van_gogh_path, "van_gogh_data")
+bob_ross_path <- file.path(picasso_path, "bob_ross")
+br_data_path <- file.path(bob_ross_path, "bob_ross_data")
 
 artist <- "picasso"
 
@@ -113,7 +115,7 @@ feature_model <- "resnet"
 if (artist == "picasso") {
   feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
   
-  full_df <- fread(file.path(feature_path, paste0("pca_", target_cat, "_", feature_model, ".csv"))) %>% 
+  full_df <- fread(file.path(feature_path, paste0("pca_combined_", target_cat, "_", feature_model, ".csv"))) %>% 
     as.data.frame()
 } else {
   full_df <- fread(file.path(vg_data_path, paste0("pca_", feature_model, ".csv"))) %>% 
@@ -132,7 +134,6 @@ full_features <- full_df[full_pc_cols]
 
 
 # Figure 1
-- Prepare an alternate version of movement sample plots for the presentation (without grey lines)
 
 ## tSNE cluster samples
 
@@ -1417,12 +1418,11 @@ mvt_density_plot
 ```
 
 
-
 ## Visual similarity by temporal distance
 
 ```{r}
 vissim_by_tempdist <- read_csv(file.path(picasso_path, "results",
-                                         "vissim_by_tempdist.csv"))
+                                         "vissim_by_tempdist_3.csv"))
 
 
 vertical_breaks <- tibble(name = c("day","week", "month", "year","decade"),
@@ -1444,7 +1444,7 @@ vissim_tempd_plot <- vissim_by_tempdist %>%
            color="red", size=5, hjust = 0,
            angle = 90) +
   annotation_logticks(sides = "b") +
-  scale_x_continuous("time between paintings (days)", trans="log2",
+  scale_x_continuous("time between paintings (days)", trans="log10",
                      breaks = c(1, 10, 100, 1000),
                      minor_breaks = c(seq(2, 9, 1),
                                       seq(20, 90, 10),
@@ -1461,7 +1461,7 @@ vissim_tempd_plot <- vissim_by_tempdist %>%
   ) +
   theme_classic(base_size = 14)
 
-ggsave(file.path("img", "picasso_vissim_tempdist.jpg"),
+ggsave(file.path("img", "picasso_vissim_tempdist_2.jpg"),
        width = 8, height = 6)
 ```
 
@@ -1471,7 +1471,7 @@ ggsave(file.path("img", "picasso_vissim_tempdist.jpg"),
 
 ```{r}
 slidw_df <- read_csv(file.path(picasso_path, "results",
-                               "slide_window5y_burst1m_2.csv"))
+                               "slide_window5y_burst1m_3.csv"))
 slidw_df <- slidw_df %>% 
   filter(start_date >= "1900-01-01")
 
@@ -1512,10 +1512,15 @@ cstep_slidw_plot <- slidw_df %>%
 ```{r}
 year_window <- 5
 style_dim.df <- read_csv(file.path(picasso_path, "results",
-                                   paste0("slide_window", year_window, "y_artdim1m.csv")))
+                                   paste0("slide_window", year_window, "y_artdim1m_3.csv")))
+vg_dim.df <- read_csv(file.path(picasso_path, "results",
+                                paste0("slide_vg", year_window, "y_artdim1m.csv")))
+
 style_dim.df <- style_dim.df %>% 
   filter(dateStart >= "1900-01-01")
 
+model <- lm(dim90 ~ adj_yearDate, data = vg_dim.df)
+style_dim.df$vg_pred <- predict(model, tibble(adj_yearDate = style_dim.df$dateStart))
 
 dim_slidw_plot <- style_dim.df %>% 
   ggplot(aes(x=dateStart, y=dim90)) +
@@ -1523,10 +1528,23 @@ dim_slidw_plot <- style_dim.df %>%
   # geom_vline(xintercept = ymd("1900-08-01"), color = "red") +
   theme_classic() +
   geom_smooth(method="lm") +
+  # geom_line(aes(y=vg_pred), color='red') +
   ylim(24, 34) +
   xlab("time (year)") +
   ylab("Style Manifold Dimensionality") +
   theme(axis.title=element_text(size=14))
+
+# style_dim.df %>% 
+#   filter(dateStart > '1905-01-01', dateStart <= '1916-01-01') %>% 
+#   ggplot(aes(x=dateStart, y=dim90)) +
+#   geom_line() +
+#   # geom_vline(xintercept = ymd("1900-08-01"), color = "red") +
+#   theme_classic() +
+#   geom_smooth(method="lm") +
+#   ylim(24, 34) +
+#   xlab("time (year)") +
+#   ylab("Style Manifold Dimensionality") +
+#   theme(axis.title=element_text(size=14))
 ```
 
 ### Burstiness
@@ -1677,11 +1695,705 @@ plot_grid(
   ncol = 3, rel_widths = c(0.7, 0.025, 1)
 )
 
-ggsave("img/picasso_fig4.jpg", width = 14, height = 8)
+ggsave("img/picasso_fig4_2.jpg", width = 14, height = 8)
 ```
 
 
 # Supplemtal Figures
+
+## Bob Ross
+
+### Step size BR-vs-Picasso
+
+```{r}
+target_cat <- "painting"
+feature_model <- "resnet"
+
+
+# Picasso
+feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
+picas_df <- fread(file.path(feature_path, paste0("pca_combined_", target_cat, "_", feature_model, ".csv"))) %>%
+  as.data.frame()
+
+
+# Bob Ross
+bobr_df <- fread(file.path(br_data_path, paste0("pca_combined_", feature_model, ".csv"))) %>% 
+  as.data.frame()
+bobr_df$release_date <- as.Date(bobr_df$release_date)
+
+bobr_years <- bobr_df$year %>% unique()
+```
+
+
+```{r}
+ordered_df <- picas_df %>% 
+  left_join(art_data %>% select(opp, dayStart, dateStart),
+            by = "opp") %>% 
+  filter(monthStart != 0, dayStart != 0) %>% 
+  arrange(yearStart, monthStart, dayStart) %>% 
+  select(dateStart, low_pc1:high_pc100)
+
+
+# daily level movements
+pc_ordered_pca <- ordered_df %>% 
+  group_by(dateStart) %>% 
+  summarize(across(contains("_pc"), mean), .groups = "drop") %>% 
+  select(-dateStart)
+
+trimmed_pca1 <- pc_ordered_pca[-1,] # remove the first row
+trimmed_pca2 <- pc_ordered_pca[-nrow(pc_ordered_pca),] # remove the last row
+
+## Cosine step sizes
+abs_step_sizes <- pc_ordered_pca %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+dot_pca <- rowSums(trimmed_pca1*trimmed_pca2)
+size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+
+picas_step_sizes <- (1 - dot_pca/size_product)/2
+
+
+
+# Bob Ross
+# daily level movements
+br_ordered_pca <- bobr_df %>% 
+  group_by(release_date) %>% 
+  summarize(across(contains("_pc"), mean), .groups = "drop") %>% 
+  select(contains("_pc"))
+
+trimmed_pca1 <- br_ordered_pca[-1,] # remove the first row
+trimmed_pca2 <- br_ordered_pca[-nrow(br_ordered_pca),] # remove the last row
+
+## Cosine step sizes
+abs_step_sizes <- br_ordered_pca %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+dot_pca <- rowSums(trimmed_pca1*trimmed_pca2)
+size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+
+bobr_step_sizes <- (1 - dot_pca/size_product)/2
+
+
+# plot overlapping histograms
+
+picas.tmp <- tibble(step_size = picas_step_sizes, artist = "Picasso")
+bobr.tmp <- tibble(step_size = bobr_step_sizes, artist = "Bob Ross")
+
+comb.step <- rbind(picas.tmp, bobr.tmp)
+
+br_picas_shists <- ggplot(data = comb.step, aes(x=step_size, fill=artist)) +
+  geom_histogram(aes(y=after_stat(density)), color="black", alpha=0.5,
+                 bins=50, position="identity") +
+  scale_x_continuous("Stylistic Change", limits = c(0,1), expand = c(0,0)) +
+  scale_y_continuous("", expand = c(0,0)) +
+  theme_classic() +
+  theme(legend.position = c(0.85, 0.5),
+        axis.title=element_text(size=14))
+```
+
+
+### Step size over time
+
+```{r}
+# Picasso
+pslidw_df <- read_csv(file.path(picasso_path, "results",
+                               "slide_window5y_burst1m_3.csv"))
+pslidw_df <- pslidw_df %>% 
+  filter(start_date >= "1900-01-01")
+
+pstep_slidw_plot <- pslidw_df %>% 
+  ggplot(aes(x = start_date, y = cstep_avg)) +
+  geom_line() +
+  xlab("time (year)") +
+  scale_y_continuous(name = expression("Stylistic Change, "*Delta*"("*s[t]*","*s[t+1]*")"),
+                     limits = c(0.1, 0.5)) +
+  ggtitle("Picasso") +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.title=element_text(size=14),
+        plot.title = element_text(face = "bold", hjust = 0.5))
+
+
+
+# Bob Ross
+brslidw_df <- read_csv(file.path(picasso_path, "results",
+                               "slide_br5y_burst1m_3.csv"))
+
+brstep_slidw_plot <- brslidw_df %>% 
+  ggplot(aes(x = start_date, y = cstep_avg)) +
+  geom_line() +
+  # geom_line(aes(y = cstep_pred), color = "blue", linewidth = 1) +
+  xlab("time (year)") +
+  scale_y_continuous(name = expression("Stylistic Change, "*Delta*"("*s[t]*","*s[t+1]*")"),
+                     limits = c(0.1, 0.5)) +
+  ggtitle("Bob Ross") +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.title=element_text(size=14),
+        plot.title = element_text(face = "bold", hjust = 0.5))
+```
+
+
+### Dimensionality over time
+
+```{r}
+year_window <- 5
+
+# Picasso
+pstyle_dim.df <- read_csv(file.path(picasso_path, "results",
+                                    paste0("slide_window", year_window, "y_artdim1m_3.csv")))
+
+pstyle_dim.df <- pstyle_dim.df %>% 
+  filter(dateStart >= "1900-01-01")
+
+pdim_slidw_plot <- pstyle_dim.df %>% 
+  ggplot(aes(x=dateStart, y=dim90)) +
+  geom_line() +
+  # geom_vline(xintercept = ymd("1900-08-01"), color = "red") +
+  theme_classic() +
+  geom_smooth(method="lm") +
+  ylim(23, 34) +
+  xlab("time (year)") +
+  ylab("Style Manifold Dimensionality") +
+  ggtitle("Picasso") +
+  theme(axis.title=element_text(size=14),
+        plot.title = element_text(face = "bold", hjust = 0.5))
+
+
+# Bob Ross
+brstyle_dim.df <- read_csv(file.path(picasso_path, "results",
+                                   paste0("slide_br", year_window, "y_artdim1m_3.csv")))
+
+
+brdim_slidw_plot <- brstyle_dim.df %>% 
+  ggplot(aes(x=release_date, y=dim90)) +
+  geom_line() +
+  # geom_vline(xintercept = ymd("1900-08-01"), color = "red") +
+  theme_classic() +
+  geom_smooth(method="lm") +
+  ylim(23, 34) +
+  xlab("time (year)") +
+  ylab("Style Manifold Dimensionality") +
+  ggtitle("Bob Ross") +
+  theme(axis.title=element_text(size=14),
+        plot.title = element_text(face = "bold", hjust = 0.5))
+```
+
+### Combine plots (BR-vs-Picasso)
+
+```{r}
+alabel <- ggdraw() + 
+  draw_label(
+    "a",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+blabel <- ggdraw() + 
+  draw_label(
+    "b",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+clabel <- ggdraw() + 
+  draw_label(
+    "c",
+    fontface = 'bold',
+    size = 12,
+    x = 0.01, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+dlabel <- ggdraw() + 
+  draw_label(
+    "d",
+    fontface = 'bold',
+    size = 12,
+    x = 0.01, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+elabel <- ggdraw() + 
+  draw_label(
+    "e",
+    fontface = 'bold',
+    size = 12,
+    x = 0.01, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+step_slide_plot <- plot_grid(
+  blabel, clabel,
+  pstep_slidw_plot, brstep_slidw_plot,
+  ncol = 2, rel_heights = c(0.1, 1)
+)
+
+dim_plot <- plot_grid(
+  dlabel, pdim_slidw_plot,
+  elabel, brdim_slidw_plot,
+  ncol = 1, rel_heights = c(0.1, 1, 0.1, 1)
+)
+
+left_panel <- plot_grid(
+  alabel, br_picas_shists, step_slide_plot,
+  ncol = 1, rel_heights = c(0.1, 1, 1.1)
+)
+
+br_vs_picas_plot <- plot_grid(
+  left_panel, dim_plot,
+  ncol = 2, rel_widths = c(1, 0.9)
+)
+
+ggsave("img/picasso_vs_br_sup1.jpg", plot = br_vs_picas_plot, width = 14, height = 8)
+```
+
+
+### Heatmap and density plots
+
+```{r}
+bob_ross_path <- file.path(picasso_path, "bob_ross")
+br_data_path <- file.path(bob_ross_path, "bob_ross_data")
+
+feature_model <- "resnet"
+
+full_df <- fread(file.path(br_data_path, paste0("pca_combined_", feature_model, ".csv"))) %>% 
+  as.data.frame()
+full_df$release_date <- as.Date(full_df$release_date)
+
+
+ordered_df <- full_df %>% 
+  arrange(release_date) %>% 
+  select(release_date, low_pc1:high_pc100)
+
+
+# daily level movements
+d_ordered_pca <- ordered_df %>% 
+  group_by(release_date) %>% 
+  summarize(across(contains("_pc"), mean), .groups = "drop") %>% 
+  select(-release_date)
+
+trimmed_pca1 <- d_ordered_pca[-1,] # remove the first row
+trimmed_pca2 <- d_ordered_pca[-nrow(d_ordered_pca),] # remove the last row
+
+## Cosine step sizes
+abs_step_sizes <- d_ordered_pca %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+dot_pca <- rowSums(trimmed_pca1*trimmed_pca2)
+size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+
+d_step_sizes <- (1 - dot_pca/size_product)/2
+
+## Directional changes (cosine similarity)
+mvt_df <- trimmed_pca1 - trimmed_pca2
+
+trimmed_mvt1 <- mvt_df[-1,] # remove the first row
+trimmed_mvt2 <- mvt_df[-nrow(mvt_df),] # remove the last row
+
+### Euclidean distance of the step
+abs_step_sizes <- mvt_df %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+dot_pca <- rowSums(trimmed_mvt1*trimmed_mvt2)
+size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+
+d_cos_sims <- dot_pca/size_product
+
+
+# Null model
+
+# shuffle date column and arrange dataframe
+shuff_df <- full_df %>% 
+  transform(release_date = sample(release_date)) %>% 
+  arrange(release_date) %>% 
+  select(release_date, low_pc1:high_pc100)
+
+shuff_df %>% head()
+
+# daily level movements
+d_ordered_pca <- shuff_df %>% 
+  group_by(release_date) %>% 
+  summarize(across(contains("_pc"), mean), .groups = "drop") %>% 
+  select(-release_date)
+
+trimmed_pca1 <- d_ordered_pca[-1,] # remove the first row
+trimmed_pca2 <- d_ordered_pca[-nrow(d_ordered_pca),] # remove the last row
+
+## Cosine step sizes
+abs_step_sizes <- d_ordered_pca %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+dot_pca <- rowSums(trimmed_pca1*trimmed_pca2)
+size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+
+nd_step_sizes <- (1 - dot_pca/size_product)/2
+
+## Directional changes (cosine similarity)
+mvt_df <- trimmed_pca1 - trimmed_pca2
+
+trimmed_mvt1 <- mvt_df[-1,] # remove the first row
+trimmed_mvt2 <- mvt_df[-nrow(mvt_df),] # remove the last row
+
+### Euclidean distance of the step
+abs_step_sizes <- mvt_df %>%
+  mutate(across(contains("_pc"), ~ . ^2)) %>%
+  select(contains("_pc")) %>%
+  rowSums() %>%
+  as.vector() %>%
+  sqrt()
+
+dot_pca <- rowSums(trimmed_mvt1*trimmed_mvt2)
+size_product <- abs_step_sizes[-1]*abs_step_sizes[-length(abs_step_sizes)]
+
+nd_cos_sims <- dot_pca/size_product
+```
+
+#### Combine plots
+
+```{r}
+library(ks)
+
+df <- tibble(step_size = d_step_sizes[2:length(d_step_sizes)], cos_sim = d_cos_sims)
+
+df.probs1 <- ks::kde(df,
+                     xmin=c(0, -1),
+                     xmax=c(+1, +1))
+
+kde_matrix1 <- df.probs1$estimate
+
+rownames(kde_matrix1) <- df.probs1$eval.points[[1]]
+colnames(kde_matrix1) <- df.probs1$eval.points[[2]]
+
+kde_tb1 <- reshape2::melt(kde_matrix1) %>%
+  rename(step_size = Var1, cos_sim = Var2)
+
+heatmap_plot <- kde_tb1 %>% ggplot(aes(x=step_size, y=cos_sim)) + 
+  geom_tile(aes(fill=value)) +
+  geom_contour(aes(z=value),
+               color="black",
+               breaks = c(0.4, 1, 1.8, 2.4)) +
+  scale_x_continuous(name = expression("Stylistic Change, "*Delta*"("*s[t]*","*s[t+1]*")"), expand=c(0,0)) +
+  scale_y_continuous(name = expression("Direction Change, "*tau*"("*v[t]*","*v[t+1]*")"), expand=c(0,0)) +
+  scale_fill_gradient(name = "Density", low = "blue", high = "red") +
+  theme_classic() +
+  theme(legend.position = "none",
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title=element_text(size=14),
+        panel.border = element_rect(colour = "black",
+                                    fill=NA, linewidth=3))
+
+cstep_density <- data.frame(d_step_sizes) %>% 
+  ggplot(aes(x = d_step_sizes)) +
+  geom_histogram(aes(y=..density..), bins=50) +
+  geom_density() +
+  scale_x_continuous(name="", limits=c(0,1), expand = c(0,0), breaks = NULL) +
+  ylab("") +
+  theme_classic() +
+  theme(axis.title=element_text(size=14),
+        axis.title.x = element_blank(),
+        plot.margin = margin(l = 12,
+                             r = 8,
+                             b = 2))
+
+turn_density <- data.frame(d_cos_sims) %>% 
+  ggplot(aes(y = d_cos_sims)) +
+  geom_histogram(aes(x=..density..), bins=50) +
+  geom_density() +
+  scale_y_continuous(limits=c(-1,1), expand = c(0,0), breaks = NULL) +
+  xlab("") +
+  theme_classic() +
+  theme(axis.title=element_text(size=14),
+        axis.title.y = element_blank(),
+        plot.margin = margin(b = 9,
+                             t = 7,
+                             l = 4))
+
+mvt_density_plot <- plot_grid(
+  cstep_density, NULL, heatmap_plot, turn_density,
+  rel_widths = c(4, 1),
+  rel_heights = c(1, 4),
+  ncol = 2
+)
+
+mvt_density_plot
+
+ggsave("img/br_mvt_heatmap_2.jpg", width = 8, height = 8)
+```
+
+
+### Visual similarity by temporal distance
+
+```{r}
+vissim_by_tempdist <- read_csv(file.path(picasso_path, "results",
+                                         "vissimbr_by_tempdist_3.csv"))
+
+
+vertical_breaks <- tibble(name = c("day","week", "month", "year","decade"),
+                          days = c(1, 7, 30, 365, 365*10))
+
+vissim_tempd_plot <- vissim_by_tempdist %>% 
+  filter(period_end >= (1/365)-0.0001) %>% # at least a day apart
+  filter(period_end <=20) %>%
+  filter(n > 0) %>%
+  ggplot(aes(x=period_end*365, y = cos_sim_both_m)) + 
+  # geom_line() + 
+  geom_point() +
+  # geom_smooth(
+  #   data=vissim_by_tempdist %>% filter(period_end > 1/365, period_end <= 10),
+  #   method="lm", se=F, formula = y ~ x, color = "lightblue") + 
+  geom_vline(data=vertical_breaks, aes(xintercept = days), linetype='dashed', color='red') + 
+  annotate(geom = "text", x = vertical_breaks$days *.8,
+           label = vertical_breaks$name, y=-.03,
+           color="red", size=5, hjust = 0,
+           angle = 90) +
+  annotation_logticks(sides = "b") +
+  scale_x_continuous("time between paintings (days)", trans="log10",
+                     breaks = c(1, 10, 100, 1000),
+                     minor_breaks = c(seq(2, 9, 1),
+                                      seq(20, 90, 10),
+                                      seq(200, 900, 100))
+  ) +
+  # scale_y_log10("stylistic similarity",
+  #               breaks = seq(0.01, .25, .01),
+  #               labels = c(rep("", 4), sprintf("%.2f", .05), 
+  #                          rep("", 4), sprintf("%.2f", .10),  
+  #                          rep("", 4), sprintf("%.2f", .15),  
+  #                          rep("", 4), sprintf("%.2f", .20), 
+  #                          rep("", 4), sprintf("%.2f", .25)),
+  #               limits = c(.045, .215), expand = c(0,0),
+  # ) +
+  theme_classic(base_size = 14)
+
+ggsave(file.path("img", "bobross_vissim_tempdist_2.jpg"),
+       width = 8, height = 6)
+```
+
+### Sliding window results
+
+#### Stylistic steps
+
+```{r}
+slidw_df <- read_csv(file.path(picasso_path, "results",
+                               "slide_br5y_burst1m_3.csv"))
+# slidw_df <- slidw_df %>% 
+#   filter(start_date >= "1900-01-01")
+
+# N.logistic <- function(t, k, L, t0) L/(1 + exp(-k*(t - t0)))
+
+# slidw_df$t <- 1:nrow(slidw_df)
+# lmodel <- nls(cstep_avg ~ N.logistic(t, k, L, t0), data = slidw_df, 
+#               start = list(k = 0.5, L = 0.5, t0 = 50))
+# slidw_df$cstep_pred <- predict(lmodel)
+
+cstep_slidw_plot <- slidw_df %>% 
+  ggplot(aes(x = start_date, y = cstep_avg)) +
+  geom_line() +
+  # geom_line(aes(y = cstep_pred), color = "blue", linewidth = 1) +
+  xlab("time (year)") +
+  scale_y_continuous(name = expression("Stylistic Change, "*Delta*"("*s[t]*","*s[t+1]*")"),
+                     limits = c(0.1, 0.5)) +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.title=element_text(size=14))
+```
+
+#### Stylistic dimensionality
+
+```{r}
+year_window <- 5
+style_dim.df <- read_csv(file.path(picasso_path, "results",
+                                   paste0("slide_br", year_window, "y_artdim1m_3.csv")))
+
+
+dim_slidw_plot <- style_dim.df %>% 
+  ggplot(aes(x=release_date, y=dim90)) +
+  geom_line() +
+  # geom_vline(xintercept = ymd("1900-08-01"), color = "red") +
+  theme_classic() +
+  geom_smooth(method="lm") +
+  ylim(23, 34) +
+  xlab("time (year)") +
+  ylab("Style Manifold Dimensionality") +
+  theme(axis.title=element_text(size=14))
+
+style_dim.df %>% 
+  filter(release_date > "1986-02-01")
+```
+
+#### Burstiness
+
+```{r}
+slidw_df <- slidw_df %>% 
+  mutate(rescaled_loc_burst = (loc_burst + 1) / 2,
+         rescaled_date_burst = (date_burst + 1) / 2,
+         adjust_burst = log(rescaled_loc_burst / rescaled_date_burst),
+         diff_burst = loc_burst - date_burst)
+
+slidw_df$adjust_burst[is.infinite(slidw_df$adjust_burst)] <- NA
+
+slidw_df %>% 
+  summarize(avg_loc_burst = mean(rescaled_loc_burst, na.rm = T),
+            avg_date_burst = mean(rescaled_date_burst, na.rm = T),
+            mean_adj_burst = mean(adjust_burst, na.rm = T)) %>% 
+  mutate(adjust_avg_burst = avg_loc_burst / avg_date_burst)
+
+# date_burst_plot <- slidw_df %>% 
+#   ggplot(aes(x=start_date, y=date_burst)) +
+#   geom_line() +
+#   xlab("time (year)") +
+#   scale_y_continuous(name="B(activity)", limits=c(-1,1)) +
+#   geom_smooth(method="lm") +
+#   theme_classic()
+# 
+# burst_plot <- slidw_df %>% 
+#   ggplot(aes(x=start_date, y=loc_burst)) +
+#   geom_line() +
+#   xlab("time (year)") +
+#   scale_y_continuous(name="B(stylistic movement)", limits=c(-1,1)) +
+#   geom_smooth(method="lm") +
+#   theme_classic()
+
+# ggsave(file.path("img", "slidw5y_step1m_loc1sd_burstiness.png"),
+#        width = 12, height = 6)
+
+histburst_plot <- slidw_df %>% 
+  ggplot(aes(x=loc_burst)) +
+  geom_histogram(bins = 100) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  scale_x_continuous(name="Burstiness", limits=c(-1,1)) +
+  scale_y_continuous(expand = c(0,0)) +
+  ylab("frequency") +
+  theme_classic() +
+  theme(axis.title=element_text(size=14))
+
+diff_burst_plot <- slidw_df %>%
+  ggplot(aes(x=start_date, y=diff_burst)) +
+  geom_line() +
+  xlab("time (year)") +
+  scale_y_continuous(name="B(stylistic movement) - B(activity)", limits=c(-2,2)) +
+  geom_smooth(method="lm") +
+  theme_classic()
+```
+
+### Combining plots
+
+```{r}
+fig4_alabel <- ggdraw() + 
+  draw_label(
+    "a",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+fig4_blabel <- ggdraw() + 
+  draw_label(
+    "b",
+    fontface = 'bold',
+    size = 12,
+    x = 0, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+fig4_clabel <- ggdraw() + 
+  draw_label(
+    "c",
+    fontface = 'bold',
+    size = 12,
+    x = 0.01, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+fig4_dlabel <- ggdraw() + 
+  draw_label(
+    "d",
+    fontface = 'bold',
+    size = 12,
+    x = 0.01, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+fig4_elabel <- ggdraw() + 
+  draw_label(
+    "e",
+    fontface = 'bold',
+    size = 12,
+    x = 0.01, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+fig4_flabel <- ggdraw() + 
+  draw_label(
+    "f",
+    fontface = 'bold',
+    size = 12,
+    x = 0.01, y = 0.1,
+    hjust = 0, vjust = 0
+  )
+
+
+slide_plots <- plot_grid(
+  fig4_clabel, mvt_density_plot,
+  fig4_clabel, cstep_slidw_plot,
+  fig4_dlabel, dim_slidw_plot,
+  fig4_elabel, histburst_plot,
+  ncol = 1, rel_heights = c(0.1, 1, 0.1, 1, 0.1, 1, 0.1, 1)
+) + theme(panel.border = element_rect(color = "black",
+                                      fill = NA,
+                                      size = 2))
+
+slide_plots.2 <- plot_grid(
+  fig4_clabel, fig4_dlabel,
+  mvt_density_plot, cstep_slidw_plot,
+  fig4_elabel, fig4_flabel,
+  dim_slidw_plot, histburst_plot,
+  ncol = 2, rel_heights = c(0.1, 1, 0.1, 1)
+) + theme(panel.border = element_rect(color = "black",
+                                      fill = NA,
+                                      size = 2))
+ 
+cumstep_gridplot <- plot_grid(
+  NA, NA, fig4_blabel, vissim_tempd_plot,
+  ncol = 1, rel_heights = c(0.1, 1, 0.05, 1)
+)
+
+plot_grid(
+  cumstep_gridplot, NA, slide_plots.2,
+  ncol = 3, rel_widths = c(0.7, 0.025, 1)
+)
+
+ggsave("img/picasso_br_fig4_2.jpg", width = 14, height = 8)
+```
+
 
 ## Burstiness
 
