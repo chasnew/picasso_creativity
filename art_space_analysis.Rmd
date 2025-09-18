@@ -19,8 +19,6 @@ library(patchwork)
 
 home_dir <- path.expand("~")
 picasso_path <- file.path(home_dir, "Library/CloudStorage/Box-Box/QuantifyingPicasso")
-van_gogh_path <- file.path(picasso_path, "van_gogh")
-vg_data_path <- file.path(van_gogh_path, "van_gogh_data")
 
 artist <- "picasso"
 
@@ -30,7 +28,8 @@ cbPalette <- c('#999999', '#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2',
 # Data loading
 
 ```{r}
-art_data <- read.delim("raw_data/artwork1.csv", colClasses = "character") # /t as separator
+art_data <- read.csv("processed_data/painting_metadata.csv")
+# art_data <- read.delim("raw_data/artwork1.csv", colClasses = "character") # /t as separator
 
 # parse out date, month, and year variables from existing columns
 art_data <- art_data %>% 
@@ -42,12 +41,6 @@ art_data <- art_data %>%
          yearStart = as.numeric(yearStart),
          monthStart = as.numeric(monthStart),
          dayStart = as.numeric(dayStart))
-
-# remove weird data (8 entries)
-art_data <- art_data %>%
-  filter(category != "25~26-March/1936") %>% # shifted column (fixable)
-  filter(category != "") %>% # empty rows
-  filter(yearEnd != 0) # 2 entries w/ missing end dates
 
 # number of years to finish
 art_data <- art_data %>%
@@ -69,11 +62,8 @@ art_data <- art_data %>%
   mutate(date_duration = dateEnd - dateStart)
 
 # select necessary columns
-reduced_art <- art_data %>% 
-  select(opp, title, category, dayStart, monthStart, yearStart, yearMonthStart, dateStart)
-
-paintings <- reduced_art %>% 
-  filter(category == "painting")
+paintings <- art_data %>% 
+  select(opp, dayStart, monthStart, yearStart, yearMonthStart, dateStart, dateEnd)
 
 # Set up non-overlapping windows
 annualBins <- 12 # 12 months

@@ -28,7 +28,8 @@ cbPalette <- c('#999999', '#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2',
 # Data loading
 
 ```{r, warning=FALSE}
-art_data <- read.delim("raw_data/artwork1.csv", colClasses = "character") # /t as separator
+art_data <- read.csv("processed_data/painting_metadata.csv")
+# art_data <- read.delim("raw_data/artwork1.csv", colClasses = "character") # /t as separator
 
 # parse out date, month, and year variables from existing columns
 art_data <- art_data %>% 
@@ -40,12 +41,6 @@ art_data <- art_data %>%
          yearStart = as.numeric(yearStart),
          monthStart = as.numeric(monthStart),
          dayStart = as.numeric(dayStart))
-
-# remove weird data (8 entries)
-art_data <- art_data %>%
-  filter(category != "25~26-March/1936") %>% # shifted column (fixable)
-  filter(category != "") %>% # empty rows
-  filter(yearEnd != 0) # 2 entries w/ missing end dates
 
 # number of years to finish
 art_data <- art_data %>%
@@ -67,11 +62,8 @@ art_data <- art_data %>%
   mutate(date_duration = dateEnd - dateStart)
 
 # select necessary columns
-reduced_art <- art_data %>% 
-  select(opp, title, category, dayStart, monthStart, yearStart, yearMonthStart, dateStart)
-
-paintings <- reduced_art %>% 
-  filter(category == "painting")
+paintings <- art_data %>% 
+  select(opp, dayStart, monthStart, yearStart, yearMonthStart, dateStart, dateEnd)
 
 # Set up non-overlapping windows
 annualBins <- 12 # 12 months
@@ -100,6 +92,10 @@ majorPeriodOnset <- tibble(period = c("Blue",
                                               1925+2/12)) %>% 
   mutate(timeWindow = ceiling(yearMonthStart / windowSize) * windowSize,
          onsetYear = floor(timeWindow))
+
+# paintings %>% 
+#   select(opp, dateStart, dateEnd) %>% 
+#   write_csv("processed_data/painting_metadata.csv")
 ```
 
 
@@ -126,83 +122,6 @@ tmp_filelist <- list.files(feature_path)
 
 ```{r}
 source("mvt_analysis.R")
-```
-
-
-## Burstiness sensitivity
-
-```{r}
-## pre-calculate movement vectors
-# ordered_df <- full_df %>% 
-#   left_join(art_data %>% select(opp, dayStart, dateStart),
-#             by = "opp") %>% 
-#   filter(monthStart != 0, dayStart != 0) %>% 
-#   arrange(yearStart, monthStart, dayStart) %>% 
-#   select(dateStart, low_pc1:high_pc100)
-# 
-# # aggregate data into different windows
-# window_size <- 7
-# 
-# first_date <- min(ordered_df$dateStart)
-# ordered_df <- ordered_df %>% 
-#   mutate(day_count = as.numeric(dateStart - first_date),
-#          date_group = floor(day_count/window_size))
-# 
-# agg_pca <- ordered_df %>% 
-#   group_by(date_group) %>% 
-#   summarize(across(contains("_pc"), mean))
-# 
-# trimmed_pca1 <- agg_pca[-1,] # remove the first row
-# trimmed_pca2 <- agg_pca[-nrow(agg_pca),] # remove the last row
-# 
-# mvt_df <- trimmed_pca1 - trimmed_pca2
-# 
-# ## Step sizes
-# step_sizes <- mvt_df %>% 
-#   mutate(across(contains("_pc"), ~ . ^2)) %>% 
-#   select(contains("_pc")) %>% 
-#   rowSums() %>% 
-#   as.vector() %>% 
-#   sqrt()
-# 
-# ## varying threshold for burstiness calculation
-# burst_threshs <- seq(-2, 3, by=0.1)
-# 
-# result_list <- list(thresh = c(),
-#                     burstiness = c(),
-#                     big_count = c(),
-#                     iei_sd = c(),
-#                     iei_mean = c())
-# 
-# for (thresh in burst_threshs) {
-#   result_list$thresh <- c(result_list$thresh, thresh)
-#   
-#   ## Burstiness
-#   bigsteps <- detect_burst(step_sizes, thresh=thresh)
-#   iei <- extract_iei(bigsteps)[-1]
-#   
-#   result_list$burstiness <- c(result_list$burstiness, burstiness(iei))
-#   result_list$big_count <- c(result_list$big_count, sum(burst_df$bigstep))
-#   result_list$iei_sd <- c(result_list$iei_sd, sd(iei))
-#   result_list$iei_mean <- c(result_list$iei_mean, mean(iei))
-# }
-# 
-# burstsen_results <- data.frame(result_list)
-# 
-# burstsen_results
-# burstsen_results %>% 
-#   ggplot(aes(x=thresh, y=burstiness)) +
-#   geom_point() +
-#   xlab("big-step threshold") +
-#   ylim(c(-1,1)) +
-#   theme_minimal()
-# 
-
-# visualize bursts
-# ggplot(tibble(bigstep = as.integer(bigsteps), ind = 1:length(bigsteps)),
-#        aes(x = ind, y = bigstep)) +
-#   geom_col() +
-#   ylim(c(0,10))
 ```
 
 
