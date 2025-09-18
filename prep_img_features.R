@@ -155,7 +155,7 @@ for (year in truc_yearlist) {
   
   for (path_batch in path_batches) {
     print(paste("batch", b_count))
-    flush.console
+    flush.console()
     b_count <- b_count + 1
     
     # load images
@@ -164,6 +164,13 @@ for (year in truc_yearlist) {
                image_to_array() %>% 
                divide_by(255)
     ) # result in list
+    
+    # y <- map(path_batch,
+    #          ~image_load(.x, target_size = c(224,224), grayscale = FALSE)
+    # ) # result in list
+    # tmp_img <- y[[53]] %>% image_to_array()
+    # as.cimg(tmp_img) %>% plot(axes=FALSE)
+    
     x <- array(unlist(x), dim = c(224, 224, 3, length(x))) %>% # convert into an array
       aperm(c(4,1,2,3))
     
