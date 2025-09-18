@@ -93,17 +93,6 @@ fixed_dims <- 20 # number of starting and fixed dimensions
 novel_dims <- 10 # number of novel dimensions
 n_iter <- length(exist_dates)
 
-# function to get the SD for each dimension over time
-
-# levy-walk-like foraging with an alternation between exploration and exploitation
-# sd_harsh_fun <- function(t = 1, n_iter = 1000, num_cycles = 3){
-#   small_sd <- 0.01
-#   case_when((t %% (n_iter/num_cycles)) < (n_iter/num_cycles)/2 ~ small_sd,
-#             TRUE ~ 1)}
-# 
-# ARS_sd_fun <- approxfun(x = seq(1, n_iter+50, 50),
-#                         sd_harsh_fun(seq(1, n_iter+50, 50),
-#                                      n_iter = n_iter, num_cycles = 50))
 
 ars_step_fun <- function(dim = 1, t = 1, n_iter = 1000, num_cycles = 3) {
   search_param <- case_when(dim < 0 ~ 1,
@@ -115,11 +104,6 @@ ars_step_fun <- function(dim = 1, t = 1, n_iter = 1000, num_cycles = 3) {
   return(step_size * direction)
 }
 
-# increasingly constrictive foraging like experts
-# contract_sd_fun <- function(dim = 1, t = 1, dim_scale = 1, k = 1/10) {
-#   return(1 - (1/(1 + exp(-k*(t - (dim_scale*dim) - 50)))))
-# }
-
 constrict_step_fun <- function(dim = 1, t = 1, dim_scale = 1, k = 1/10) {
   search_param <- case_when(dim < 0 ~ 1,
                             TRUE ~ 1 - (1/(1 + exp(-k*(t - (dim_scale*dim))))))
@@ -127,14 +111,6 @@ constrict_step_fun <- function(dim = 1, t = 1, dim_scale = 1, k = 1/10) {
   direction <- ((-1)^rbinom(n=length(search_param), size=1, prob=0.5))
   return(step_size * direction)
 }
-
-# increasingly expansive foraging like Picasso
-# start off with more saturated dimensions (~25 dims)
-# newer dimensions (10 dims) fully saturated early (~1930)
-
-# expand_sd_fun <- function(dim = 1, t = 1, dim_scale = 1, k = 1/10) {
-#   return(1/(1 + exp(-k*(t - (dim_scale*dim) - 50))))
-# }
 
 expand_step_fun <- function(dim = 1, t = 1, dim_scale = 1, k = 1/10) {
   search_param <- case_when(dim < 0 ~ 1,
@@ -157,31 +133,31 @@ source("mvt_analysis.R")
 
 # takes 100 steps to for the curve to approach max value
 # step size of the last dim starts increases at the last 1500 time steps
-dim_scale <- (n_iter / novel_dims) - (1800 / novel_dims) - 1
-
-t <- seq(1,n_iter,1)
-
-step0 <- expand_step_fun(-1, t, dim_scale)
-step1 <- expand_step_fun(0, t, dim_scale)
-step2 <- expand_step_fun(10, t, dim_scale)
-plot(t, step0)
-plot(t, step1)
-plot(t, step2)
-
-step3 <- constrict_step_fun(0, t, dim_scale)
-step4 <- constrict_step_fun(1, t, dim_scale)
-step5 <- constrict_step_fun(10, t, dim_scale)
-plot(t, step3)
-plot(t, step4)
-plot(t, step5)
-
-
-ars_steps <- ars_step_fun(t = t, n_iter = n_iter, num_cycles = 40)
-tibble(t = t[1:300], step = ars_steps[1:300]) %>% 
-  mutate(abs_step = abs(step)) %>% 
-  ggplot(aes(x=t, y=abs_step)) +
-  geom_point() +
-  theme_classic()
+# dim_scale <- (n_iter / novel_dims) - (1800 / novel_dims) - 1
+# 
+# t <- seq(1,n_iter,1)
+# 
+# step0 <- expand_step_fun(-1, t, dim_scale)
+# step1 <- expand_step_fun(0, t, dim_scale)
+# step2 <- expand_step_fun(10, t, dim_scale)
+# plot(t, step0)
+# plot(t, step1)
+# plot(t, step2)
+# 
+# step3 <- constrict_step_fun(0, t, dim_scale)
+# step4 <- constrict_step_fun(1, t, dim_scale)
+# step5 <- constrict_step_fun(10, t, dim_scale)
+# plot(t, step3)
+# plot(t, step4)
+# plot(t, step5)
+# 
+# 
+# ars_steps <- ars_step_fun(t = t, n_iter = n_iter, num_cycles = 40)
+# tibble(t = t[1:300], step = ars_steps[1:300]) %>% 
+#   mutate(abs_step = abs(step)) %>% 
+#   ggplot(aes(x=t, y=abs_step)) +
+#   geom_point() +
+#   theme_classic()
 
 # ggsave("img/ars40switch_sample_steps.png", width = 12, height = 6)
 ```
