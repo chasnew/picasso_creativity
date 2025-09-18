@@ -20,8 +20,13 @@ library(ggrepel)
 
 home_dir <- path.expand("~")
 picasso_path <- file.path(home_dir, "Library/CloudStorage/Box-Box/QuantifyingPicasso")
+
 van_gogh_path <- file.path(picasso_path, "van_gogh")
 vg_data_path <- file.path(van_gogh_path, "van_gogh_data")
+
+bob_ross_path <- file.path(picasso_path, "bob_ross")
+br_data_path <- file.path(bob_ross_path, "bob_ross_data")
+
 target_cat <- "painting"
 feature_model <- "resnet"
 ```
@@ -108,6 +113,8 @@ majorPeriodOnset <- tibble(period = c("Blue",
                                               1925+2/12)) %>% 
   mutate(timeWindow = ceiling(yearMonthStart / windowSize) * windowSize,
          onsetYear = floor(timeWindow))
+
+preduced_art <- reduced_art
 ```
 
 ## Van Gogh
@@ -131,183 +138,200 @@ reduced_art <- art_data %>%
 ```
 
 
+## Bob Ross
+```{r}
+# artwork tabular data
+art_data <- read.csv(file.path(br_data_path, "bob_ross_paintings.csv")) %>% 
+  select(painting_index, painting_title, season, episode, num_colors)
+
+# The Joy of Painting episode data with *date*
+ep_data <- read.csv(file.path(br_data_path, "episode_data.csv"))
+names(ep_data)[2] <- "episode"
+
+# Merge release date data with painting index
+reduced_art <- merge(x = art_data, y = ep_data, by = c("season", "episode")) %>% 
+  select(painting_index, season, episode, title, release_date)
+
+brreduced_art <- reduced_art
+```
 
 # Code testing
 ```{r}
 # model loading
 # vgg16 (https://neurohive.io/en/popular-networks/vgg16/)
-base_model <- application_vgg16(weights = 'imagenet')
-summary(base_model) # display layer names
-
-# extract intermediate layers
-model.conv1 <- keras_model(inputs = base_model$input,
-                           outputs = get_layer(base_model, 'block1_conv1')$output)
-model.pool1 <- keras_model(inputs = base_model$input,
-                           outputs = get_layer(base_model, 'block1_pool')$output)
-model.fc2 <- keras_model(inputs = base_model$input,
-                         outputs = get_layer(base_model, 'fc2')$output)
-
-
-# sample images
-year_list <- paintings %>% 
-  filter(yearStart >= 1900, yearStart <= 1970) %>% 
-  pull(yearStart) %>% unique()
-
-sample_paintings <- paintings %>% 
-  filter(yearStart >= 1900, yearStart <= 1970) %>% 
-  group_by(yearStart) %>% 
-  do(head(., 30))
-
-sample_opps <- sample_paintings %>% 
-  filter(yearStart == 1901) %>% 
-  pull(opp)
-
-# image path
-img_dir <- file.path(picasso_path, "data_from_OPP/OPP_images/")
-
-# reconstruct filename from OPP
-reconstruct_fn <- function(opp_str) {
-  return(paste0("yopp", substr(opp_str, 5, 6), "-", substr(opp_str, 8, 10), ".jpg"))
-}
-
-# sample_images <- list.files(file.path("sample_images"), full.names = FALSE)
-# sample_path <- paste0("sample_images/", sample_images[1])
+# base_model <- application_vgg16(weights = 'imagenet')
+# summary(base_model) # display layer names
 # 
-# # reconstruct OPP id from file names
-# reconstruct_opp <- function(opp) {
-#   return(paste0("OPP.", substr(opp, 5, 6), ":", substr(opp, 8, 10)))
+# # extract intermediate layers
+# model.conv1 <- keras_model(inputs = base_model$input,
+#                            outputs = get_layer(base_model, 'block1_conv1')$output)
+# model.pool1 <- keras_model(inputs = base_model$input,
+#                            outputs = get_layer(base_model, 'block1_pool')$output)
+# model.fc2 <- keras_model(inputs = base_model$input,
+#                          outputs = get_layer(base_model, 'fc2')$output)
+# 
+# 
+# # sample images
+# year_list <- paintings %>% 
+#   filter(yearStart >= 1900, yearStart <= 1970) %>% 
+#   pull(yearStart) %>% unique()
+# 
+# sample_paintings <- paintings %>% 
+#   filter(yearStart >= 1900, yearStart <= 1970) %>% 
+#   group_by(yearStart) %>% 
+#   do(head(., 30))
+# 
+# sample_opps <- sample_paintings %>% 
+#   filter(yearStart == 1901) %>% 
+#   pull(opp)
+# 
+# # image path
+# img_dir <- file.path(picasso_path, "data_from_OPP/OPP_images/")
+# 
+# # reconstruct filename from OPP
+# reconstruct_fn <- function(opp_str) {
+#   return(paste0("yopp", substr(opp_str, 5, 6), "-", substr(opp_str, 8, 10), ".jpg"))
 # }
 # 
-# sample_images %>% reconstruct_opp
-
-# load single image
-img <- image_load(sample_path, target_size = c(224,224))
-
-# as.raster to plot
-x <- image_to_array(img)
-
-if(to_plot) {
-  x %>%
-    as.raster(max=255L) %>% 
-    plot()
-}
-
-x <- array_reshape(x, c(1, dim(x)))
-x <- imagenet_preprocess_input(x)
+# # sample_images <- list.files(file.path("sample_images"), full.names = FALSE)
+# # sample_path <- paste0("sample_images/", sample_images[1])
+# # 
+# # # reconstruct OPP id from file names
+# # reconstruct_opp <- function(opp) {
+# #   return(paste0("OPP.", substr(opp, 5, 6), ":", substr(opp, 8, 10)))
+# # }
+# # 
+# # sample_images %>% reconstruct_opp
+# 
+# # load single image
+# img <- image_load(sample_path, target_size = c(224,224))
+# 
+# # as.raster to plot
+# x <- image_to_array(img)
+# 
+# if(to_plot) {
+#   x %>%
+#     as.raster(max=255L) %>% 
+#     plot()
+# }
+# 
+# x <- array_reshape(x, c(1, dim(x)))
+# x <- imagenet_preprocess_input(x)
 ```
 
 # Image feature extraction (Samples)
+
 ```{r}
 # model loading
-feature_model <- "resnet"
-
-if (feature_model == "vgg") {
-  # vgg model
-  base_model <- application_vgg16(weights = 'imagenet')
-  # intermediate layers
-  model.conv1 <- keras_model(inputs = base_model$input,
-                             outputs = get_layer(base_model, 'block1_conv1')$output)
-  model.pool1 <- keras_model(inputs = base_model$input,
-                             outputs = get_layer(base_model, 'block1_pool')$output)
-  model.fc <- keras_model(inputs = base_model$input,
-                          outputs = get_layer(base_model, 'fc2')$output)
-} else if (feature_model == "resnet") {
-  # resnet model
-  base_model <- application_resnet50(weights = 'imagenet')
-  # (None, 112, 112, 64)
-  model.conv1 <- keras_model(inputs = base_model$input,
-                             outputs = get_layer(base_model, 'conv1_conv')$output)
-  # (None, 56, 56, 64)
-  model.pool1 <- keras_model(inputs = base_model$input,
-                             outputs = get_layer(base_model, 'pool1_pool')$output)
-  # (None, 2048)
-  model.fc <- keras_model(inputs = base_model$input,
-                          outputs = get_layer(base_model, 'avg_pool')$output)
-}
-
-
-batch_size <- 30
-
-# retrieve file names
-year_list <- paintings %>% 
-  pull(yearStart) %>% unique()
-
-sample_paintings <- paintings %>% 
-  filter(yearStart >= 1900, yearStart <= 1970) %>% 
-  group_by(yearStart) %>% 
-  do(head(., batch_size))
-
-# reconstruct filename from OPP
-reconstruct_fn <- function(opp_str) {
-  return(paste0("yopp", substr(opp_str, 5, 6), "-", substr(opp_str, 8, 10), ".jpg"))
-}
-
-img_dir <- file.path(picasso_path, "data_from_OPP/OPP_images/")
-
-# enable local access to Box folders
-for (year in year_list) {
-  tmp_filelist <- list.files(file.path(img_dir, year, "ythumbs"))
-}
-
-# extract feature of each year (later convert into batch)
-low_features <- c()
-high_features <- c()
-
-for (year in year_list) {
-  # construct file paths
-  sample_opps <- sample_paintings %>% 
-    filter(yearStart == year) %>% 
-    pull(opp)
-  
-  opp_paths <- sample_opps %>% 
-    reconstruct_fn() %>% 
-    file.path(img_dir, year, "ythumbs", .)
-  
-  x <- map(opp_paths,
-           ~image_load(.x, target_size = c(224,224), grayscale = FALSE) %>% 
-             image_to_array() %>% 
-             divide_by(255)
-         ) # result in list
-  x <- array(unlist(x), dim = c(224, 224, 3, length(x))) %>% # convert into an array
-    aperm(c(4,1,2,3))
-  
-  feature.conv1 <- model.conv1 %>%
-    predict(x) %>%
-    rowMeans(dims = 2)
-  feature.pool1 <- model.pool1 %>% 
-    predict(x) %>% 
-    rowMeans(dims = 2)
-  feature.fc <- model.fc %>% 
-    predict(x)
-  
-  low_features <- rbind(low_features, cbind(feature.conv1, feature.pool1))
-  high_features <- rbind(high_features, feature.fc)
-}
-
-# filter out null (zero-valued) columns
-nz_masks <- high_features %>% 
-  colSums != 0
-high_features <- high_features[,nz_masks]
-
-# PCA analysis for low-leven and high-level features
-low_features <- prcomp(low_features, center = TRUE, scale. = TRUE)$x[,1:100]
-colnames(low_features) <- paste0("low_pc", 1:100)
-
-high_features <- prcomp(high_features, center = TRUE, scale. = TRUE)$x[,1:100]
-colnames(high_features) <- paste0("high_pc", 1:100)
-
-# combine low-level and high-level features
-full_features <- cbind(low_features, high_features)
-
-full_df <- data.frame(opp = sample_paintings$opp, yearMonthStart = sample_paintings$yearMonthStart)
-full_df <- cbind(full_df, low_features[,1:2], high_features[,1:2])
-full_df$yearStart <- sample_paintings$yearStart
+# feature_model <- "resnet"
+# 
+# if (feature_model == "vgg") {
+#   # vgg model
+#   base_model <- application_vgg16(weights = 'imagenet')
+#   # intermediate layers
+#   model.conv1 <- keras_model(inputs = base_model$input,
+#                              outputs = get_layer(base_model, 'block1_conv1')$output)
+#   model.pool1 <- keras_model(inputs = base_model$input,
+#                              outputs = get_layer(base_model, 'block1_pool')$output)
+#   model.fc <- keras_model(inputs = base_model$input,
+#                           outputs = get_layer(base_model, 'fc2')$output)
+# } else if (feature_model == "resnet") {
+#   # resnet model
+#   base_model <- application_resnet50(weights = 'imagenet')
+#   # (None, 112, 112, 64)
+#   model.conv1 <- keras_model(inputs = base_model$input,
+#                              outputs = get_layer(base_model, 'conv1_conv')$output)
+#   # (None, 56, 56, 64)
+#   model.pool1 <- keras_model(inputs = base_model$input,
+#                              outputs = get_layer(base_model, 'pool1_pool')$output)
+#   # (None, 2048)
+#   model.fc <- keras_model(inputs = base_model$input,
+#                           outputs = get_layer(base_model, 'avg_pool')$output)
+# }
+# 
+# 
+# batch_size <- 30
+# 
+# # retrieve file names
+# year_list <- paintings %>% 
+#   pull(yearStart) %>% unique()
+# 
+# sample_paintings <- paintings %>% 
+#   filter(yearStart >= 1900, yearStart <= 1970) %>% 
+#   group_by(yearStart) %>% 
+#   do(head(., batch_size))
+# 
+# # reconstruct filename from OPP
+# reconstruct_fn <- function(opp_str) {
+#   return(paste0("yopp", substr(opp_str, 5, 6), "-", substr(opp_str, 8, 10), ".jpg"))
+# }
+# 
+# img_dir <- file.path(picasso_path, "data_from_OPP/OPP_images/")
+# 
+# # enable local access to Box folders
+# for (year in year_list) {
+#   tmp_filelist <- list.files(file.path(img_dir, year, "ythumbs"))
+# }
+# 
+# # extract feature of each year (later convert into batch)
+# low_features <- c()
+# high_features <- c()
+# 
+# for (year in year_list) {
+#   # construct file paths
+#   sample_opps <- sample_paintings %>% 
+#     filter(yearStart == year) %>% 
+#     pull(opp)
+#   
+#   opp_paths <- sample_opps %>% 
+#     reconstruct_fn() %>% 
+#     file.path(img_dir, year, "ythumbs", .)
+#   
+#   x <- map(opp_paths,
+#            ~image_load(.x, target_size = c(224,224), grayscale = FALSE) %>% 
+#              image_to_array() %>% 
+#              divide_by(255)
+#          ) # result in list
+#   x <- array(unlist(x), dim = c(224, 224, 3, length(x))) %>% # convert into an array
+#     aperm(c(4,1,2,3))
+#   
+#   feature.conv1 <- model.conv1 %>%
+#     predict(x) %>%
+#     rowMeans(dims = 2)
+#   feature.pool1 <- model.pool1 %>% 
+#     predict(x) %>% 
+#     rowMeans(dims = 2)
+#   feature.fc <- model.fc %>% 
+#     predict(x)
+#   
+#   low_features <- rbind(low_features, cbind(feature.conv1, feature.pool1))
+#   high_features <- rbind(high_features, feature.fc)
+# }
+# 
+# # filter out null (zero-valued) columns
+# nz_masks <- high_features %>% 
+#   colSums != 0
+# high_features <- high_features[,nz_masks]
+# 
+# # PCA analysis for low-leven and high-level features
+# low_features <- prcomp(low_features, center = TRUE, scale. = TRUE)$x[,1:100]
+# colnames(low_features) <- paste0("low_pc", 1:100)
+# 
+# high_features <- prcomp(high_features, center = TRUE, scale. = TRUE)$x[,1:100]
+# colnames(high_features) <- paste0("high_pc", 1:100)
+# 
+# # combine low-level and high-level features
+# full_features <- cbind(low_features, high_features)
+# 
+# full_df <- data.frame(opp = sample_paintings$opp, yearMonthStart = sample_paintings$yearMonthStart)
+# full_df <- cbind(full_df, low_features[,1:2], high_features[,1:2])
+# full_df$yearStart <- sample_paintings$yearStart
 ```
 
 # PCA on pre-processed image features
 ```{r}
 # change path according to where the feature data are stored
-artist <- "van_gogh"
+artist <- "bob_ross"
 if (artist == "picasso") {
   feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
 
@@ -317,8 +341,17 @@ if (artist == "picasso") {
   high_features <- fread(file.path(feature_path, paste0("high_feature_", target_cat, "_",
                                                         feature_model, ".csv"))) %>%
     as.data.frame()
-} else {
+} else if (artist == "van_gogh") {
   feature_path <- file.path(picasso_path, "van_gogh", "van_gogh_data")
+
+  low_features <- fread(file.path(feature_path, paste0("low_feature_",
+                                                       feature_model, ".csv"))) %>% 
+    as.data.frame()
+  high_features <- fread(file.path(feature_path, paste0("high_feature_",
+                                                        feature_model, ".csv"))) %>%
+    as.data.frame()
+} else if (artist == "bob_ross") {
+  feature_path <- file.path(picasso_path, "bob_ross", "bob_ross_data")
 
   low_features <- fread(file.path(feature_path, paste0("low_feature_",
                                                        feature_model, ".csv"))) %>% 
@@ -397,5 +430,73 @@ pca_sd_list <- list(low_sd = low.pca.results$sdev,
                     high_sd = high.pca.results$sdev)
 
 save(pca_sd_list, file = paste0("pca_sd_list", target_cat, "_", feature_model, ".Rdata"))
+```
+
+
+# PCA on combined data
+
+```{r}
+feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
+plow_features <- fread(file.path(feature_path, paste0("low_feature_", target_cat, "_",
+                                                      feature_model, ".csv"))) %>% 
+  as.data.frame()
+phigh_features <- fread(file.path(feature_path, paste0("high_feature_", target_cat, "_",
+                                                       feature_model, ".csv"))) %>%
+  as.data.frame()
+
+
+feature_path <- file.path(picasso_path, "bob_ross", "bob_ross_data")
+brlow_features <- fread(file.path(feature_path, paste0("low_feature_",
+                                                       feature_model, ".csv"))) %>% 
+  as.data.frame()
+brhigh_features <- fread(file.path(feature_path, paste0("high_feature_",
+                                                        feature_model, ".csv"))) %>%
+  as.data.frame()
+
+
+picasso_n <- nrow(plow_features)
+bobr_n <- nrow(brlow_features)
+
+low_features <- rbind(plow_features, brlow_features)
+high_features <- rbind(phigh_features, brhigh_features)
+
+# filter out null (zero-valued) columns
+nz_masks <- high_features %>% 
+  colSums != 0
+high_features <- high_features[,nz_masks]
+
+# PCA analysis for low-leven and high-level features
+low.pca.results <- prcomp(low_features, center = TRUE, scale. = TRUE)
+low_features <- low.pca.results$x[,1:100]
+colnames(low_features) <- paste0("low_pc", 1:100)
+
+high.pca.results <- prcomp(high_features, center = TRUE, scale. = TRUE)
+high_features <- high.pca.results$x[,1:100]
+colnames(high_features) <- paste0("high_pc", 1:100)
+
+# combine low-level and high-level features
+full_features <- cbind(low_features, high_features)
+
+
+
+# Picasso
+feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
+full_df <- cbind(paintings, full_features[1:picasso_n,])
+
+# save PCA results
+full_df %>%
+  data.table() %>%
+  fwrite(file.path(feature_path, paste0("pca_combined_", target_cat, "_", feature_model, ".csv")))
+
+
+# Bob Ross
+feature_path <- file.path(picasso_path, "bob_ross", "bob_ross_data")
+full_df <- cbind(brreduced_art, full_features[(picasso_n+1):(picasso_n+bobr_n),])
+
+# save PCA results
+full_df %>%
+  data.table() %>%
+  fwrite(file.path(feature_path, paste0("pca_combined_", feature_model, ".csv")))
+
 ```
 
