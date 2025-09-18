@@ -113,7 +113,7 @@ feature_model <- "resnet"
 if (artist == "picasso") {
   feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
   
-  full_df <- fread(file.path(feature_path, paste0("pca_", target_cat, "_", feature_model, ".csv"))) %>% 
+  full_df <- fread(file.path(feature_path, paste0("pca_combined_", target_cat, "_", feature_model, ".csv"))) %>% 
     as.data.frame()
 } else {
   full_df <- fread(file.path(vg_data_path, paste0("pca_", feature_model, ".csv"))) %>% 
@@ -460,99 +460,99 @@ pairwise_df$euclid_dis <- ordered_df %>%
   as.matrix() %>% 
   as.vector
 
-pairwise_df %>% 
-  ggplot(aes(x = opp1, y = opp2)) +
-  geom_raster(aes(fill = cos_sim)) +
-  scale_fill_gradient2() +
-  labs(title = "pairwise cosine similarity") +
-  theme(axis.text.x=element_blank(),
-        axis.text.y=element_blank(),
-        axis.ticks = element_blank())
-
-ggsave(file.path("img", "full_cos_similarity_heatmap.png"))
-
-pairwise_df %>% 
-  ggplot(aes(x = opp1, y = opp2)) +
-  geom_raster(aes(fill = euclid_dis)) +
-  scale_fill_gradient2() +
-  labs(title = "pairwise Euclidean distances") +
-  theme(axis.text.x=element_blank(),
-        axis.text.y=element_blank(),
-        axis.ticks = element_blank())
-
-ggsave(file.path("img", "full_euclid_dist_heatmap.png"))
-
-# low-level PCA similarity matrices
-pairwise_df$low_cos_sim <- ordered_df %>% 
-  select(contains("low_pc")) %>% 
-  as.matrix() %>% 
-  cossim.dist() %>% 
-  as.vector()
-
-pairwise_df$euclid_dis <- ordered_df %>% 
-  select(contains("low_pc")) %>% 
-  as.matrix() %>% 
-  dist() %>% 
-  as.matrix() %>% 
-  as.vector
-
-pairwise_df %>% 
-  ggplot(aes(x = opp1, y = opp2)) +
-  geom_raster(aes(fill = cos_sim)) +
-  scale_fill_gradient2() +
-  labs(title = "low-level PCA cosine similarity") +
-  theme(axis.text.x=element_blank(),
-        axis.text.y=element_blank(),
-        axis.ticks = element_blank())
-
-ggsave(file.path("img", "low_cos_similarity_heatmap.png"))
-
-pairwise_df %>% 
-  ggplot(aes(x = opp1, y = opp2)) +
-  geom_raster(aes(fill = euclid_dis)) +
-  scale_fill_gradient2() +
-  labs(title = "low-level PCA Euclidean distances") +
-  theme(axis.text.x=element_blank(),
-        axis.text.y=element_blank(),
-        axis.ticks = element_blank())
-
-ggsave(file.path("img", "low_euclid_dist_heatmap.png"))
-
-# high-level PCA similarity matrics
-pairwise_df$high_cos_sim <- ordered_df %>% 
-  select(contains("high_pc")) %>% 
-  as.matrix() %>% 
-  cossim.dist() %>% 
-  as.vector()
-
-pairwise_df$euclid_dis <- ordered_df %>% 
-  select(contains("high_pc")) %>% 
-  as.matrix() %>% 
-  dist() %>% 
-  as.matrix() %>% 
-  as.vector
-
-pairwise_df %>% 
-  ggplot(aes(x = opp1, y = opp2)) +
-  geom_raster(aes(fill = cos_sim)) +
-  scale_fill_gradient2() +
-  labs(title = "high-level PCA cosine similarity") +
-  theme(axis.text.x=element_blank(),
-        axis.text.y=element_blank(),
-        axis.ticks = element_blank())
-
-ggsave(file.path("img", "high_cos_similarity_heatmap.png"))
-
-pairwise_df %>% 
-  ggplot(aes(x = opp1, y = opp2)) +
-  geom_raster(aes(fill = euclid_dis)) +
-  scale_fill_gradient2() +
-  labs(title = "high-level Euclidean distances") +
-  theme(axis.text.x=element_blank(),
-        axis.text.y=element_blank(),
-        axis.ticks = element_blank())
-
-ggsave(file.path("img", "high_euclid_dist_heatmap.png"))
+# pairwise_df %>% 
+#   ggplot(aes(x = opp1, y = opp2)) +
+#   geom_raster(aes(fill = cos_sim)) +
+#   scale_fill_gradient2() +
+#   labs(title = "pairwise cosine similarity") +
+#   theme(axis.text.x=element_blank(),
+#         axis.text.y=element_blank(),
+#         axis.ticks = element_blank())
+# 
+# ggsave(file.path("img", "full_cos_similarity_heatmap.png"))
+# 
+# pairwise_df %>% 
+#   ggplot(aes(x = opp1, y = opp2)) +
+#   geom_raster(aes(fill = euclid_dis)) +
+#   scale_fill_gradient2() +
+#   labs(title = "pairwise Euclidean distances") +
+#   theme(axis.text.x=element_blank(),
+#         axis.text.y=element_blank(),
+#         axis.ticks = element_blank())
+# 
+# ggsave(file.path("img", "full_euclid_dist_heatmap.png"))
+# 
+# # low-level PCA similarity matrices
+# pairwise_df$low_cos_sim <- ordered_df %>% 
+#   select(contains("low_pc")) %>% 
+#   as.matrix() %>% 
+#   cossim.dist() %>% 
+#   as.vector()
+# 
+# pairwise_df$euclid_dis <- ordered_df %>% 
+#   select(contains("low_pc")) %>% 
+#   as.matrix() %>% 
+#   dist() %>% 
+#   as.matrix() %>% 
+#   as.vector
+# 
+# pairwise_df %>% 
+#   ggplot(aes(x = opp1, y = opp2)) +
+#   geom_raster(aes(fill = cos_sim)) +
+#   scale_fill_gradient2() +
+#   labs(title = "low-level PCA cosine similarity") +
+#   theme(axis.text.x=element_blank(),
+#         axis.text.y=element_blank(),
+#         axis.ticks = element_blank())
+# 
+# ggsave(file.path("img", "low_cos_similarity_heatmap.png"))
+# 
+# pairwise_df %>% 
+#   ggplot(aes(x = opp1, y = opp2)) +
+#   geom_raster(aes(fill = euclid_dis)) +
+#   scale_fill_gradient2() +
+#   labs(title = "low-level PCA Euclidean distances") +
+#   theme(axis.text.x=element_blank(),
+#         axis.text.y=element_blank(),
+#         axis.ticks = element_blank())
+# 
+# ggsave(file.path("img", "low_euclid_dist_heatmap.png"))
+# 
+# # high-level PCA similarity matrics
+# pairwise_df$high_cos_sim <- ordered_df %>% 
+#   select(contains("high_pc")) %>% 
+#   as.matrix() %>% 
+#   cossim.dist() %>% 
+#   as.vector()
+# 
+# pairwise_df$euclid_dis <- ordered_df %>% 
+#   select(contains("high_pc")) %>% 
+#   as.matrix() %>% 
+#   dist() %>% 
+#   as.matrix() %>% 
+#   as.vector
+# 
+# pairwise_df %>% 
+#   ggplot(aes(x = opp1, y = opp2)) +
+#   geom_raster(aes(fill = cos_sim)) +
+#   scale_fill_gradient2() +
+#   labs(title = "high-level PCA cosine similarity") +
+#   theme(axis.text.x=element_blank(),
+#         axis.text.y=element_blank(),
+#         axis.ticks = element_blank())
+# 
+# ggsave(file.path("img", "high_cos_similarity_heatmap.png"))
+# 
+# pairwise_df %>% 
+#   ggplot(aes(x = opp1, y = opp2)) +
+#   geom_raster(aes(fill = euclid_dis)) +
+#   scale_fill_gradient2() +
+#   labs(title = "high-level Euclidean distances") +
+#   theme(axis.text.x=element_blank(),
+#         axis.text.y=element_blank(),
+#         axis.ticks = element_blank())
+# 
+# ggsave(file.path("img", "high_euclid_dist_heatmap.png"))
 ```
 
 ### Daily pairwise similarity
@@ -610,46 +610,6 @@ daily_pair_df %>%
 ggsave(file.path("img", "daily_full_eucdist_heatmap.png"))
 ```
 
-### local distance over time (painting pairwise)
-
-```{r}
-local_dist_df <- pairwise_df %>%
-  filter(opp1 != opp2, dateStartDiff >= 0, dateStartDiff < 60) %>% 
-  mutate(yearStart = year(dateStart1), monthStart = month(dateStart1),
-         step_size = (1 - cos_sim)/2) %>% 
-  group_by(yearStart, monthStart) %>% 
-  summarize(step_size = mean(step_size)) %>% 
-  mutate(dateStart = ymd(paste0(yearStart, "/", monthStart, "/", 1)))
-
-local_dist_df %>%   
-  ggplot(aes(x=dateStart, y=step_size)) +
-  geom_point() +
-  geom_line() +
-  theme_classic()
-
-ggsave("img/local60d_stepsize.png", width = 12, height = 7)
-```
-
-### distance of varying intervals
-
-```{r}
-max_day_diff <- as.integer(max(pairwise_df$dateStartDiff))
-
-intv_dist_df <- pairwise_df %>%
-  filter(opp1 != opp2) %>% 
-  mutate(step_size = (1 - cos_sim)/2,
-         dateStartDiff = abs(dateStartDiff)) %>% 
-  group_by(dateStartDiff) %>% 
-  summarize(step_size = mean(step_size))
-
-intv_dist_df %>%   
-  ggplot(aes(x=dateStartDiff, y=step_size)) +
-  geom_point() +
-  geom_line() +
-  theme_classic()
-
-ggsave("img/varintv_stepsize.png", width = 12, height = 7)
-```
 
 ### distance of cumulative intervals
 
@@ -698,7 +658,7 @@ nodup_pair_df <- nodup_samedates %>%
 
 # write_csv(nodup_pair_df,
 #           file.path(picasso_path, "results",
-#                     "nodup_pair_cossim.csv"))
+#                     "nodup_pair_cossim_3.csv"))
 ```
 
 
@@ -706,7 +666,7 @@ nodup_pair_df <- nodup_samedates %>%
 library(zoo)
 
 nodup_pair_df <- read_csv(file.path(picasso_path, "results",
-                                    "nodup_pair_cossim.csv"))
+                                    "nodup_pair_cossim_3.csv"))
 
 intv_dist_df <- nodup_pair_df %>%
   mutate(cstep = (1 - cos_sim)/2) %>% 
@@ -723,15 +683,14 @@ cum_interval_df <- intv_dist_df %>%
 cum_interval_df %>% 
   ggplot(aes(x = dateStartDiff, y = cstep_avg)) +
   geom_point() +
-  scale_x_continuous(name = "t (days)", trans="log10",
-                     breaks = intv_dist_df$dateStartDiff) +
+  scale_x_continuous(name = "t (days)") +
   theme_classic()
 
 cum_interval_df$dateStartDiff <- as.numeric(cum_interval_df$dateStartDiff)
 
 write_csv(cum_interval_df,
           file.path(picasso_path, "results",
-                    "cum_cstep_intervals.csv"))
+                    "cum_cstep_intervals_3.csv"))
 
 
 
@@ -787,7 +746,7 @@ cosSim_by_tempDist2 <- cosSim_by_tempDist2 %>%
 
 write_csv(cosSim_by_tempDist2,
           file.path(picasso_path, "results",
-                    "vissim_by_tempdist.csv"))
+                    "vissim_by_tempdist_3.csv"))
 ```
 
 ```{r}
@@ -951,174 +910,3 @@ agg_interval_df %>%
   geom_line(aes(y = pred), color = "blue", size = 2) +
   theme_classic()
 ```
-
-
-### Foote Novelty calculation
-
-```{r}
-# Foote Novelty
-first_date <- ymd(18940101)
-last_date <- ymd(19720701)
-kernel_size <- days(30*9)
-step_size <- days(30)
-
-begin_step <- step_size
-
-begin_date <- first_date
-sep_date <- begin_date + kernel_size
-end_date <- sep_date + kernel_size
-
-latest_stretch <- FALSE # kernel stretching indicator
-
-date_results <- c()
-foote_results <- c()
-stretch_masks <- c()
-
-while (end_date < last_date) {
-  # pull cosine similarities from 4 grid kernels
-  lt_grid <- daily_pair_df %>% 
-    filter(dateStart1 >= begin_date, dateStart1 < sep_date,
-           dateStart2 >= sep_date, dateStart2 < end_date) %>% 
-    pull(cos_sim)
-  
-  rt_grid <- daily_pair_df %>% 
-    filter(dateStart1 >= sep_date, dateStart1 < end_date,
-           dateStart2 >= sep_date, dateStart2 < end_date) %>% 
-    pull(cos_sim)
-  
-  lb_grid <- daily_pair_df %>% 
-    filter(dateStart1 >= begin_date, dateStart1 < sep_date,
-           dateStart2 >= begin_date, dateStart2 < sep_date) %>% 
-    pull(cos_sim)
-  
-  rb_grid <- daily_pair_df %>% 
-    filter(dateStart1 >= sep_date, dateStart1 < end_date,
-           dateStart2 >= begin_date, dateStart2 < sep_date) %>% 
-    pull(cos_sim)
-  
-  if (length(rt_grid) > 0) {
-    off_diag_sd <- mean(lt_grid) + mean(rb_grid)
-    on_diag_sd <- mean(rt_grid) + mean(lb_grid)
-    
-    foote_novelty <-  on_diag_sd - off_diag_sd
-    
-    begin_date <- begin_date + begin_step
-    begin_step <- step_size
-    
-    stretch_masks <- append(stretch_masks, latest_stretch)
-    latest_stretch <- FALSE
-  } else {
-    foote_novelty <- 0
-    begin_step <- begin_step + step_size
-    
-    latest_stretch <- TRUE
-    stretch_masks <- append(stretch_masks, FALSE)
-  }
-  
-  date_results <- append(date_results, sep_date)
-  foote_results <- append(foote_results, foote_novelty)
-  
-  sep_date <- sep_date + step_size
-  end_date <- end_date + step_size
-}
-
-foote_df <- data.frame(date = date_results,
-                       foote_novelty = foote_results,
-                       stretch = stretch_masks)
-foote_df[is.na(foote_df$foote_novelty), 2] = 0
-
-foote_df %>% 
-  ggplot(aes(x = date, y = foote_novelty, color = stretch)) +
-  geom_point()
-```
-
-```{r}
-write_csv(foote_df,
-          file.path(picasso_path, "results", "foote_step1m_ker9m.csv"))
-```
-
-
-```{r}
-foote_df <- read_csv(file.path(picasso_path, "results", "foote_step1m_ker1m.csv"))
-
-majorPeriodOnset <- majorPeriodOnset %>% 
-  mutate(month = ceiling(12 * ((yearMonthStart+.011) - 
-                               floor(yearMonthStart))),
-         year = floor(yearMonthStart),
-         day = "1", 
-         yearMonthDay = paste(year, month, day, sep="-")) %>%
-  rowwise() %>%
-  mutate(date = ymd(yearMonthDay))
-
-gg.1m <- foote_df %>% 
-  filter(foote_novelty > 0) %>% 
-  ggplot(aes(x = date, y = foote_novelty, color = stretch)) +
-  geom_point() +
-  geom_vline(xintercept = majorPeriodOnset$date)
-
-foote_df <- read_csv(file.path(picasso_path, "results", "foote_step1m_ker6m.csv"))
-
-gg.6m <- foote_df %>% 
-  filter(foote_novelty > 0) %>% 
-  ggplot(aes(x = date, y = foote_novelty, color = stretch)) +
-  geom_point() + 
-  geom_vline(xintercept = majorPeriodOnset$date)
-
-foote_df <- read_csv(file.path(picasso_path, "results", "foote_step1m_ker12m.csv"))
-
-gg.12m <- foote_df %>% 
-  filter(foote_novelty > 0) %>% 
-  ggplot(aes(x = date, y = foote_novelty, color = stretch)) +
-  geom_point() + geom_vline(xintercept = majorPeriodOnset$date)
-
-gg.1m / gg.6m / gg.12m
-ggsave(file.path("img", "foote_novelty_compare.png"))
-```
-
-# Foote novelty analyses
-
-```{r}
-library(smoother)
-
-# moving average smoothing
-ma <- function(x, n = 5){stats::filter(x, rep(1 / n, n), sides = 1)}
-
-# need smoothing (moving average, gaussian, loess, etc)
-foote_df <- read_csv(file.path(picasso_path, "results", "foote_step1m_ker12m.csv"))
-
-# smoothing
-foote_df <- foote_df %>% 
-  mutate(foote_ma = ma(foote_novelty, n = 15),
-         foote_gaus = smth.gaussian(foote_novelty, window = 60),
-         foote_gaus2 = smth.gaussian(foote_novelty, window = 12))
-
-# local maxima detection
-foote_secdiv <- diff(sign(diff(foote_df$foote_gaus))) # second derivative
-foote_locmax <- foote_secdiv==-2 # positive slope followed by negative slope
-foote_df$locmax <- c(FALSE, foote_locmax, FALSE)
-
-
-foote_df %>% 
-  filter(foote_novelty > 0) %>% 
-  ggplot() +
-  # geom_point(aes(x = date, y = foote_novelty)) +
-  # geom_line(aes(x = date, y = foote_ma), color = "blue") +
-  geom_line(aes(x = date, y = foote_gaus), color = "orange") +
-  geom_line(aes(x= date, y = foote_gaus2), color = "blue")
-
-foote_df %>% 
-  filter(foote_novelty > 0) %>% 
-  pivot_longer(cols = starts_with("foote"),
-               names_to = "smoother",
-               values_to = "foote_novelty") %>% 
-  ggplot(aes(x = date, y = foote_novelty, color = smoother)) +
-  geom_line(alpha = 0.5)
-
-locmax_dates <- foote_df %>% 
-  filter(locmax == TRUE) %>% 
-  select(date, foote_novelty, foote_gaus, locmax)
-
-write_csv(locmax_dates,
-          file.path(picasso_path, "results", "locmax_foote_dates.csv"))
-```
-
