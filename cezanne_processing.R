@@ -5,7 +5,7 @@ library(xml2)
 
 home_dir <- path.expand("~")
 picasso_path <- file.path(home_dir, "Library/CloudStorage/Box-Box/QuantifyingPicasso")
-cezanne_path <- file.path(picasso_path, "Cezanne")
+cezanne_path <- file.path(picasso_path, "cezanne")
 
 URL <- "https://en.wikipedia.org/wiki/List_of_paintings_by_Paul_C%C3%A9zanne#/media/"
 pg <- read_html(URL)
