@@ -209,7 +209,7 @@ states <- simulate_mvt(fixed_dims, novel_dims, exist_dates, mvt_model = "ars", n
 
 write_csv(states,
           file.path("results",
-                    paste0("ars40switch_search_empi_states2.csv")))
+                    paste0("ars40switch_search_empi_states.csv")))
 ```
 
 ## Sliding Window Analysis
