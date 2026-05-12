@@ -13,8 +13,6 @@ library(abind)
 library(lubridate)
 library(stringr)
 library(imager)
-library(tensorflow)
-library(keras)
 library(Rtsne)
 library(ggrepel)
 
@@ -26,6 +24,12 @@ vg_data_path <- file.path(van_gogh_path, "van_gogh_data")
 
 bob_ross_path <- file.path(picasso_path, "bob_ross")
 br_data_path <- file.path(bob_ross_path, "bob_ross_data")
+
+cezanne_path <- file.path(picasso_path, "cezanne")
+c_data_path <- file.path(cezanne_path, "cezanne_data")
+
+monet_path <- file.path(picasso_path, "monet")
+m_data_path <- file.path(monet_path, "monet_data")
 
 target_cat <- "painting"
 feature_model <- "resnet"
@@ -154,6 +158,49 @@ reduced_art <- merge(x = art_data, y = ep_data, by = c("season", "episode")) %>%
 
 brreduced_art <- reduced_art
 ```
+
+## Cezanne
+```{r}
+# artwork tabular data
+art_data <- read.csv(file.path(c_data_path, "cezanne_paintings.csv"))
+
+# Merge release date data with painting index
+reduced_art <- art_data %>% 
+  select(r_id, fwn_id, title, startYear, endYear)
+
+# get the order of images sorted by filenames (order of PCA features)
+img_dir <- file.path(cezanne_path, "paintings")
+
+# enable local access to Box folder
+c_img_paths <- list.files(file.path(img_dir))
+
+trimmed_paths <- sub("\\.(.*)", "", c_img_paths)
+pca_order <- data.frame(fwn_id=trimmed_paths)
+
+creduced_art <- merge(reduced_art, pca_order, by="fwn_id")
+```
+
+## Monet
+```{r}
+# artwork tabular data
+art_data <- read.csv(file.path(m_data_path, "monet_paintings.csv"))
+
+# Merge release date data with painting index
+reduced_art <- art_data %>% 
+  select(cat_id, title, startYear, endYear)
+
+# get the order of images sorted by filenames (order of PCA features)
+img_dir <- file.path(monet_path, "paintings")
+
+# enable local access to Box folder
+m_img_paths <- list.files(file.path(img_dir))
+
+trimmed_paths <- sub("\\.(.*)", "", m_img_paths)
+pca_order <- data.frame(cat_id=trimmed_paths)
+
+mreduced_art <- merge(reduced_art, pca_order, by="cat_id")
+```
+
 
 # Code testing
 ```{r}
@@ -331,33 +378,43 @@ brreduced_art <- reduced_art
 # PCA on pre-processed image features
 ```{r}
 # change path according to where the feature data are stored
-artist <- "bob_ross"
+artist <- "monet"
+
 if (artist == "picasso") {
   feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
 
   low_features <- fread(file.path(feature_path, paste0("low_feature_", target_cat, "_",
-                                                       feature_model, ".csv"))) %>% 
+                                                       feature_model, "_test1.csv"))) %>% 
     as.data.frame()
   high_features <- fread(file.path(feature_path, paste0("high_feature_", target_cat, "_",
-                                                        feature_model, ".csv"))) %>%
-    as.data.frame()
-} else if (artist == "van_gogh") {
-  feature_path <- file.path(picasso_path, "van_gogh", "van_gogh_data")
-
-  low_features <- fread(file.path(feature_path, paste0("low_feature_",
-                                                       feature_model, ".csv"))) %>% 
-    as.data.frame()
-  high_features <- fread(file.path(feature_path, paste0("high_feature_",
-                                                        feature_model, ".csv"))) %>%
+                                                        feature_model, "_test1.csv"))) %>%
     as.data.frame()
 } else if (artist == "bob_ross") {
   feature_path <- file.path(picasso_path, "bob_ross", "bob_ross_data")
 
   low_features <- fread(file.path(feature_path, paste0("low_feature_",
-                                                       feature_model, ".csv"))) %>% 
+                                                       feature_model, "_test1.csv"))) %>% 
     as.data.frame()
   high_features <- fread(file.path(feature_path, paste0("high_feature_",
-                                                        feature_model, ".csv"))) %>%
+                                                        feature_model, "_test1.csv"))) %>%
+    as.data.frame()
+} else if (artist == "cezanne") {
+  feature_path <- file.path(picasso_path, "cezanne", "cezanne_data")
+
+  low_features <- fread(file.path(feature_path, paste0("low_feature_",
+                                                       feature_model, "_test1.csv"))) %>% 
+    as.data.frame()
+  high_features <- fread(file.path(feature_path, paste0("high_feature_",
+                                                        feature_model, "_test1.csv"))) %>%
+    as.data.frame()
+} else if (artist == "monet") {
+  feature_path <- file.path(picasso_path, "monet", "monet_data")
+
+  low_features <- fread(file.path(feature_path, paste0("low_feature_",
+                                                       feature_model, "_test1.csv"))) %>% 
+    as.data.frame()
+  high_features <- fread(file.path(feature_path, paste0("high_feature_",
+                                                        feature_model, "_test1.csv"))) %>%
     as.data.frame()
 }
 
@@ -378,7 +435,6 @@ colnames(high_features) <- paste0("high_pc", 1:100)
 
 # combine low-level and high-level features
 full_features <- cbind(low_features, high_features)
-
 
 if (artist == "picasso") {
   load(paste0("track_list_", target_cat, "_", feature_model, ".Rdata"))
@@ -436,6 +492,124 @@ save(pca_sd_list, file = paste0("pca_sd_list", target_cat, "_", feature_model, "
 # PCA on combined data
 
 ```{r}
+# Picasso
+feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
+plow_features <- fread(file.path(feature_path, paste0("low_feature_", target_cat, "_",
+                                                      feature_model, "_test2.csv"))) %>% 
+  as.data.frame()
+phigh_features <- fread(file.path(feature_path, paste0("high_feature_", target_cat, "_",
+                                                       feature_model, "_test2.csv"))) %>%
+  as.data.frame()
+
+# Bob Ross
+feature_path <- file.path(picasso_path, "bob_ross", "bob_ross_data")
+brlow_features <- fread(file.path(feature_path, paste0("low_feature_",
+                                                       feature_model, "_test2.csv"))) %>% 
+  as.data.frame()
+brhigh_features <- fread(file.path(feature_path, paste0("high_feature_",
+                                                        feature_model, "_test2.csv"))) %>%
+  as.data.frame()
+
+# Cezanne
+feature_path <- file.path(picasso_path, "cezanne", "cezanne_data")
+clow_features <- fread(file.path(feature_path, paste0("low_feature_",
+                                                      feature_model, "_test2.csv"))) %>% 
+  as.data.frame()
+chigh_features <- fread(file.path(feature_path, paste0("high_feature_",
+                                                       feature_model, "_test2.csv"))) %>%
+  as.data.frame()
+
+# Monet
+feature_path <- file.path(picasso_path, "monet", "monet_data")
+mlow_features <- fread(file.path(feature_path, paste0("low_feature_",
+                                                      feature_model, "_test2.csv"))) %>% 
+  as.data.frame()
+mhigh_features <- fread(file.path(feature_path, paste0("high_feature_",
+                                                       feature_model, "_test2.csv"))) %>%
+  as.data.frame()
+
+# concatenating data frames
+picasso_n <- nrow(plow_features)
+bobr_n <- nrow(brlow_features)
+c_n <- nrow(clow_features)
+m_n <- nrow(mlow_features)
+
+low_features <- rbind(plow_features, brlow_features, clow_features, mlow_features)
+high_features <- rbind(phigh_features, brhigh_features, chigh_features, mhigh_features)
+
+# filter out null (zero-valued) columns
+nz_masks <- high_features %>% 
+  colSums != 0
+high_features <- high_features[,nz_masks]
+
+# PCA analysis for low-leven and high-level features
+low.pca.results <- prcomp(low_features, center = TRUE, scale. = TRUE)
+low_features <- low.pca.results$x[,1:100]
+colnames(low_features) <- paste0("low_pc", 1:100)
+
+high.pca.results <- prcomp(high_features, center = TRUE, scale. = TRUE)
+high_features <- high.pca.results$x[,1:100]
+colnames(high_features) <- paste0("high_pc", 1:100)
+
+summary(low.pca.results)$importance[2,1:100] %>% sum()
+summary(high.pca.results)$importance[2,1:100] %>% sum()
+
+# combine low-level and high-level features
+full_features <- cbind(low_features, high_features)
+
+
+# Picasso
+p_start_ind <- 1
+p_end_ind <- picasso_n
+feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
+full_df <- cbind(paintings, full_features[p_start_ind:p_end_ind,])
+
+# save PCA results
+full_df %>%
+  data.table() %>%
+  fwrite(file.path(feature_path, paste0("pca_combined150_", target_cat, "_", feature_model, "_test2.csv")))
+
+
+# Bob Ross
+br_start_ind <- picasso_n + 1
+br_end_inds <- picasso_n + bobr_n
+feature_path <- file.path(picasso_path, "bob_ross", "bob_ross_data")
+full_df <- cbind(brreduced_art, full_features[br_start_ind:br_end_inds,])
+
+# save PCA results
+full_df %>%
+  data.table() %>%
+  fwrite(file.path(feature_path, paste0("pca_combined150_", feature_model, "_test2.csv")))
+
+
+# Cezanne
+c_start_ind <- picasso_n + bobr_n + 1
+c_end_inds <- picasso_n + bobr_n + c_n
+feature_path <- file.path(picasso_path, "cezanne", "cezanne_data")
+full_df <- cbind(creduced_art, full_features[c_start_ind:c_end_inds,])
+
+# save PCA results
+full_df %>%
+  data.table() %>%
+  fwrite(file.path(feature_path, paste0("pca_combined150_", feature_model, "_test2.csv")))
+
+
+# Monet
+m_start_ind <- picasso_n + bobr_n + c_n + 1
+m_end_inds <- picasso_n + bobr_n + c_n + m_n
+feature_path <- file.path(picasso_path, "monet", "monet_data")
+full_df <- cbind(mreduced_art, full_features[m_start_ind:m_end_inds,])
+
+# save PCA results
+full_df %>%
+  data.table() %>%
+  fwrite(file.path(feature_path, paste0("pca_combined150_", feature_model, "_test2.csv")))
+```
+
+# PCA Picasso vs Bob Ross
+
+```{r}
+# Picasso
 feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
 plow_features <- fread(file.path(feature_path, paste0("low_feature_", target_cat, "_",
                                                       feature_model, ".csv"))) %>% 
@@ -444,7 +618,7 @@ phigh_features <- fread(file.path(feature_path, paste0("high_feature_", target_c
                                                        feature_model, ".csv"))) %>%
   as.data.frame()
 
-
+# Bob Ross
 feature_path <- file.path(picasso_path, "bob_ross", "bob_ross_data")
 brlow_features <- fread(file.path(feature_path, paste0("low_feature_",
                                                        feature_model, ".csv"))) %>% 
@@ -454,6 +628,7 @@ brhigh_features <- fread(file.path(feature_path, paste0("high_feature_",
   as.data.frame()
 
 
+# concatenating data frames
 picasso_n <- nrow(plow_features)
 bobr_n <- nrow(brlow_features)
 
@@ -480,23 +655,27 @@ full_features <- cbind(low_features, high_features)
 
 
 # Picasso
+p_start_ind <- 1
+p_end_ind <- picasso_n
 feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
-full_df <- cbind(paintings, full_features[1:picasso_n,])
+full_df <- cbind(paintings, full_features[p_start_ind:p_end_ind,])
 
 # save PCA results
 full_df %>%
   data.table() %>%
-  fwrite(file.path(feature_path, paste0("pca_combined_", target_cat, "_", feature_model, ".csv")))
+  fwrite(file.path(feature_path, paste0("pca_p-vs-br_", target_cat, "_", feature_model, ".csv")))
 
 
 # Bob Ross
+br_start_ind <- picasso_n + 1
+br_end_inds <- picasso_n + bobr_n
 feature_path <- file.path(picasso_path, "bob_ross", "bob_ross_data")
-full_df <- cbind(brreduced_art, full_features[(picasso_n+1):(picasso_n+bobr_n),])
+full_df <- cbind(brreduced_art, full_features[br_start_ind:br_end_inds,])
 
 # save PCA results
 full_df %>%
   data.table() %>%
-  fwrite(file.path(feature_path, paste0("pca_combined_", feature_model, ".csv")))
+  fwrite(file.path(feature_path, paste0("pca_p-vs-br_", feature_model, ".csv")))
 
 ```
 
