@@ -21,7 +21,8 @@ library(brms)
 source("mvt_analysis.R")
 
 home_dir <- path.expand("~")
-picasso_path <- file.path(home_dir, "Library/CloudStorage/Box-Box/QuantifyingPicasso")
+# picasso_path <- file.path(home_dir, "Library/CloudStorage/Box-Box/QuantifyingPicasso")
+picasso_path <- file.path(getwd(), "processed_data/Picasso")
 
 cbPalette <- c('#999999', '#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2', '#D55E00', '#CC79A7')
 ```
@@ -29,7 +30,7 @@ cbPalette <- c('#999999', '#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2',
 # Data loading
 
 ```{r, warning=FALSE}
-art_data <- read.csv("processed_data/Picasso/painting_metadata.csv")
+art_data <- read.csv(file.path(picasso_path, "painting_metadata.csv"))
 # art_data <- read.delim("raw_data/artwork1.csv", colClasses = "character") # /t as separator
 
 # parse out date, month, and year variables from existing columns
@@ -103,17 +104,31 @@ majorPeriodOnset <- tibble(period = c("Blue",
 # Load PCA results
 
 ```{r}
-feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
+# feature_path <- file.path(picasso_path, "data_from_OPP/image_features")
 target_cat <- "painting"
-feature_model <- "effnet"
+feature_model <- "resnet"
 
-full_df <- fread(file.path(feature_path, paste0("pca_combined_", target_cat, "_", feature_model, "_test2.csv"))) %>%
+full_df <- fread(file.path(picasso_path, paste0("pca_combined_", target_cat, "_", feature_model, "_test2.csv"))) %>%
   as.data.frame()
+
+
+set.seed(3291)
+ordered_df <- full_df %>% 
+  left_join(art_data %>% select(opp, dayStart, dateStart),
+            by = "opp") %>% 
+  filter(monthStart != 0, dayStart != 0) %>% 
+  mutate(random_ind = sample(1:n())) %>% 
+  arrange(yearStart, monthStart, dayStart, random_ind) %>% 
+  select(dateStart, low_pc1:high_pc100) %>% 
+  rename(target_date = dateStart)
+
+# write_csv(ordered_df, file.path(picasso_path, paste0("pca_ordered_", target_cat, "_",
+#                                                      feature_model, "_test2.csv")))
 ```   
 
 ```{r}
 # enable local access to Box folders
-tmp_filelist <- list.files(feature_path)
+# tmp_filelist <- list.files(feature_path)
 ```
 
 
@@ -122,14 +137,6 @@ tmp_filelist <- list.files(feature_path)
 ## Fixed coarse-graining
 
 ```{r movement analysis}
-ordered_df <- full_df %>% 
-  left_join(art_data %>% select(opp, dayStart, dateStart),
-            by = "opp") %>% 
-  filter(monthStart != 0, dayStart != 0) %>% 
-  arrange(yearStart, monthStart, dayStart) %>% 
-  select(dateStart, low_pc1:high_pc100)
-
-
 # daily level movements
 d_ordered_pca <- ordered_df %>% 
   group_by(dateStart) %>% 
@@ -207,21 +214,6 @@ csy_plot <- qplot(y_cos_sims, bins = 100) +
 
 csd_plot / csm_plot / csy_plot
 # ggsave(paste0("img/direct_change_dist_", feature_model, ".png"))
-```
-
-```{r}
-stepsize_df <- stepsize_df %>% 
-  mutate(career_stage = case_when(dateStart < ymd("1910-01-01") ~ "1early",
-                                  dateStart < ymd("1920-01-01") ~ "2mid",
-                                  dateStart < ymd("1930-01-01") ~ "3mid",
-                                  dateStart < ymd("1940-01-01") ~ "4mid",
-                                  TRUE ~ "5late"))
-
-stepsize_df %>%
-  ggplot(aes(x=stepsize, fill=career_stage, group = career_stage)) + 
-  geom_density(alpha=.5) + 
-  facet_wrap(~career_stage) +
-  theme_classic()
 ```
 
 ### null model
@@ -327,53 +319,9 @@ t.test(d_cos_sims)
 ```
 
 
-### Dot and whisker plots
-
-```{r}
-mean_step <- c(mean(d_step_sizes), mean(nd_step_sizes))
-step_se <- c(stderror(d_step_sizes), stderror(nd_step_sizes))
-
-mean_cossim <- c(mean(d_cos_sims), mean(nd_cos_sims))
-cossim_se <- c(stderror(d_cos_sims), stderror(nd_cos_sims))
-
-source <- c("real", "null")
-
-summary_df <- data.frame(step_size = mean_step,
-                         step_se = step_se,
-                         cos_sim = mean_cossim,
-                         cossim_se = cossim_se,
-                         source = source)
-
-
-dw_plot <- summary_df %>% 
-  ggplot(aes(x = step_size, y = cos_sim, color = source)) +
-  geom_point(size=2) +
-  geom_errorbar(aes(ymin = cos_sim - cossim_se,
-                    ymax = cos_sim + cossim_se),
-                width = 0.005) +
-  geom_errorbarh(aes(xmin = step_size - step_se,
-                     xmax = step_size + step_se),
-                 height = 0.0025) +
-  scale_x_continuous(name = expression("Stylistic Change, "*Delta*"("*s[t]*","*s[t+1]*")")) +
-  scale_y_continuous(name = expression("Direction Change, "*tau*"("*v[t]*","*v[t+1]*")")) +
-  theme_classic(base_size = 14)
-
-ggsave(paste0("img/movement_dot_whisker.png"))
-```
-
-
 ## Sliding window analyses
 
 ```{r}
-ordered_df <- full_df %>% 
-  left_join(art_data %>% select(opp, dayStart, dateStart),
-            by = "opp") %>% 
-  filter(monthStart != 0, dayStart != 0) %>% 
-  mutate(random_ind = sample(1:n())) %>% 
-  arrange(yearStart, monthStart, dayStart, random_ind) %>% 
-  select(dateStart, low_pc1:high_pc100) %>% 
-  rename(target_date = dateStart)
-
 # number of paintings over years
 # library(zoo)
 # ordered_df %>% 
@@ -383,16 +331,12 @@ ordered_df <- full_df %>%
 #   ggplot(aes(x=year, y=moving_avg)) +
 #   geom_point() +
 #   theme_classic()
+
+centered_df <- ordered_df
   
 # centering embeddings
 # alternatively, mutate_each(funs(.-mean(.)), contains("_pc"))
-ordered_df[2:201] <- ordered_df[2:201]-colMeans(ordered_df[2:201])[col(ordered_df[2:201])]
-
-# aggregate the embedding by date
-# agg_pca <- ordered_df %>% 
-#   group_by(dateStart) %>% 
-#   summarize(across(contains("_pc"), mean)) %>% 
-#   rename(target_date = dateStart)
+centered_df[2:201] <- centered_df[2:201]-colMeans(centered_df[2:201])[col(centered_df[2:201])]
 
 # step_thresh <- 0.3830784 + (0.1682463 * 2)
 # cos_thresh <- 0
@@ -409,19 +353,19 @@ wstep_size <- 1
 wstep_unit <- "years"
 sample.size <- 40
 
-slidw_df <- sliding_window_mvt(ordered_df, first_date, last_date,
+slidw_df <- sliding_window_mvt(centered_df, first_date, last_date,
                                window_size, wstep_size, wstep_unit,
                                sample.size, sample.method = "first")
 
 write_csv(slidw_df,
-          file.path(picasso_path, "results",
+          file.path("results",
                     paste0("slide_window", year_window, "y_", feature_model,
                            "_burst1y_3_test2.csv")))
 ```
 
 
 ```{r}
-slidw_df <- read_csv(file.path(picasso_path, "results",
+slidw_df <- read_csv(file.path("results",
                                paste0("slide_window", year_window, "y_", feature_model,
                                "_burst1y_3_test2.csv")))
 
@@ -458,11 +402,6 @@ shuff_df <- full_df %>%
 
 shuff_df[2:201] <- shuff_df[2:201]-colMeans(shuff_df[2:201])[col(shuff_df[2:201])]
 
-# agg_pca <- shuff_df %>% 
-#   group_by(dateStart) %>% 
-#   summarize(across(contains("_pc"), mean)) %>% 
-#   rename(target_date = dateStart)
-
 year_window <- 5 # c(1:70)
 
 first_date <- ymd(18940101)
@@ -482,7 +421,7 @@ nslidw_df <- sliding_window_mvt(shuff_df, first_date, last_date,
 nslidw_df
 
 write_csv(nslidw_df,
-          file.path(picasso_path, "results",
+          file.path("results",
                     "slide_window_null1y.csv"))
 ```
 
@@ -490,7 +429,7 @@ write_csv(nslidw_df,
 # Visualizing results
 
 ```{r}
-slidw_df <- read_csv(file.path(picasso_path, "results",
+slidw_df <- read_csv(file.path("results",
                                paste0("slide_window", year_window, "y_", feature_model,
                                       "_burst1y_3_test2.csv")))
                                # "slide_window_null1y.csv"))
