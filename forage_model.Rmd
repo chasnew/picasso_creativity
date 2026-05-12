@@ -199,31 +199,6 @@ slidw_df <- sliding_window_mvt(ordered_pca, first_date, last_date,
 write_csv(slidw_df,
           file.path("results",
                     paste0("contract_search1y_empistp_first_summary.csv")))
-
-
-# cont_cstep_plot <- slidw_df %>% 
-#   ggplot(aes(x=start_date, cstep_avg)) +
-#   geom_line() +
-#   theme_classic()
-# 
-# cont_dim_plot <- slidw_df %>% 
-#   ggplot(aes(x=start_date, dim90)) +
-#   geom_line() +
-#   theme_classic()
-# 
-# cont_burst_plot <- slidw_df %>% 
-#   ggplot(aes(x=start_date, loc_burst)) +
-#   geom_line() +
-#   theme_classic()
-# 
-# cont_cstep_plot
-# ggsave("img/contract_cstep.png", width = 12, height = 6)
-# 
-# cont_dim_plot
-# ggsave("img/contract_dim.png", width = 12, height = 6)
-# 
-# cont_burst_plot
-# ggsave("img/contract_burst.png", width = 12, height = 6)
 ```
 
 # Area-restricted search
