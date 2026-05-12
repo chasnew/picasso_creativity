@@ -283,6 +283,10 @@ ordered_df <- full_df %>%
   filter(monthStart != 0, dayStart != 0) %>% 
   arrange(yearStart, monthStart, dayStart, opp) %>% 
   select(opp, low_pc1:high_pc100)
+  
+# centering embeddings
+# centered_df <- ordered_df
+# centered_df[2:201] <- centered_df[2:201]-colMeans(centered_df[2:201])[col(centered_df[2:201])]
 
 ordered_opp <- ordered_df %>% 
   pull(opp)
@@ -360,7 +364,7 @@ nodup_pair_df <- nodup_samedates %>%
 
 # write_csv(nodup_pair_df,
 #           file.path("results",
-#                     "nodup_pair_cossim_3.csv"))
+#                     "nodup_pair_cossim.csv"))
 ```
 
 ### log-scale w/ sliding window
@@ -369,7 +373,7 @@ Create overlapping logorithmic bins:
 
 ```{r}
 nodup_pair_df <- read_csv(file.path("results",
-                                    "nodup_pair_cossim_3.csv"))
+                                    "nodup_pair_cossim.csv"))
 
 nodup_pair_df <- nodup_pair_df %>% 
   mutate(yearStartDiff = dateStartDiff / 365)
@@ -414,7 +418,7 @@ cosSim_by_tempDist2 <- cosSim_by_tempDist2 %>%
 
 write_csv(cosSim_by_tempDist2,
           file.path("results",
-                    "vissim_by_tempdist_3.csv"))
+                    "vissim_by_tempdist.csv"))
 ```
 
 
