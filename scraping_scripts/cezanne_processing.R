@@ -16,6 +16,8 @@ paint_tbls <- rbind(tbls[[1]], tbls[[2]], tbls[[3]], tbls[[4]])
 paint_tbls <- paint_tbls %>% select(-Image)
 colnames(paint_tbls) <- c("title", "year", "dimensions", "location", "cat_id")
 
+# sum(str_detect(paint_tbls$cat_id, "R"))
+
 # extract image src from each table's row
 painting_links <- pg %>% 
   html_nodes(xpath = "//tr/td/figure/a/img") %>% 
@@ -30,15 +32,17 @@ paint_tbls$cat_id[436] <- "V 282R 463FWN 458"
 
 paint_tbls$cat_id
 
+# separate out FWN id
 cat_id_inds <- unlist(gregexpr('FWN', paint_tbls$cat_id))
 cat_id_lens <- nchar(paint_tbls$cat_id)
 paint_tbls$fwn_id <- str_replace(substr(paint_tbls$cat_id, cat_id_inds, cat_id_lens), " ", "_")
 
-# remove "/wiki/" from href and concatenate with wiki URL
-# paint_tbls$img_link <- file.path(URL, str_replace(painting_links, "/wiki/", ""))
+# separate out R id
+r_ids <- str_replace(substr(paint_tbls$cat_id, 1, cat_id_inds-1), "^[^R]*", "")
+r_ids <- str_replace(r_ids, " ", "_")
+r_ids[str_detect(r_ids, "R", negate=TRUE)] <- NA # 6 rows don't have R id
+paint_tbls$r_id <- r_ids
 
-# next step
-# remove "thumb/" and the duplicate .jpg file name at the end of the links
 # pull images using the links
 paint_tbls$img_link <- painting_links
 
@@ -53,8 +57,15 @@ paint_tbls$img_link <- sub("/thumb", "", paint_tbls$img_link)
 link_lengths <- nchar(paint_tbls$img_link)
 paint_tbls$filetype <- sub(".", "", substr(paint_tbls$img_link, link_lengths-3, link_lengths))
 
-# extract only the first year specified
-paint_tbls$startYear <- as.integer(substr(gsub("([^0-9])", "", paint_tbls$year), 1, 4))
+# extract the first and last year specified
+paint_tbls <- paint_tbls %>% 
+  mutate(stripped_year = gsub("([^0-9])", "", year),
+         startYear = as.integer(substr(stripped_year, 1, 4)),
+         endYear = case_when(nchar(stripped_year) == 8 ~ as.integer(substr(stripped_year, 5, 8)),
+                             nchar(stripped_year) == 6 ~ as.integer(paste0(substr(stripped_year, 1, 2),
+                                                                           substr(stripped_year, 5, 6))),
+                             .default = as.integer(stripped_year))) %>% 
+  select(-stripped_year)
 
 # iterate over each row of painting dataframe to download images
 for(i in 1:nrow(paint_tbls)) {
@@ -75,4 +86,4 @@ for(i in 1:nrow(paint_tbls)) {
 # paint_tbls$fwn_id[298]
 
 paint_tbls %>%
-  write_csv(file.path(cezanne_path, "cezanne_paintings.csv"))
+  write_csv(file.path(cezanne_path, "cezanne_data", "cezanne_paintings.csv"))
