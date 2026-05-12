@@ -1,0 +1,210 @@
+---
+title: "Monet Analysis"
+author: "Chanuwas (New) Aswamenakul"
+date: "2025-12-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(data.table)
+library(lubridate)
+library(stringr)
+library(entropy)
+library(rsample)
+library(cowplot)
+library(ggrepel)
+library(patchwork)
+source("mvt_analysis.R")
+
+# home_dir <- path.expand("~")
+# picasso_path <- file.path(home_dir, "Library/CloudStorage/Box-Box/QuantifyingPicasso")
+# monet_path <- file.path(picasso_path, "monet")
+# m_data_path <- file.path(monet_path, "monet_data")
+monet_path <- file.path(getwd(), "processed_data", "Monet")
+
+artist <- "monet"
+
+cbPalette <- c('#999999', '#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2', '#D55E00', '#CC79A7')
+```
+
+
+# Load PCA results
+
+```{r}
+target_cat <- "painting"
+feature_model <- "resnet"
+
+full_df <- fread(file.path(monet_path, paste0("pca_combined_", feature_model, "_test2.csv"))) %>% 
+  as.data.frame()
+
+# end year = 19088 because wiki page as a reference bracket number ("[8]")
+# wrongy_ind <- (1:nrow(full_df))[full_df$cat_id == "W1744"]
+# full_df$endYear[wrongy_ind] <- 1908
+
+# sort data chronologically using end year and cat_id
+full_df <- full_df %>% 
+  mutate(id_int = as.integer(str_remove_all(str_remove_all(cat_id, '-[0-9]'), '[^0-9]'))) %>% 
+  arrange(endYear, id_int, cat_id)
+
+years <- full_df$endYear %>% unique()
+```
+
+
+# Movement characterization
+
+## Fixed coarse-graining
+
+```{r movement analysis}
+# Check number of paintings per year
+# full_df %>% 
+#   group_by(endYear) %>% 
+#   summarize(count = n())
+
+# daily level movements
+d_ordered_pca <- full_df %>% 
+  select(contains("_pc"))
+
+monet_mvt <- ordinal_movement(d_ordered_pca)
+d_step_sizes <- monet_mvt[[1]]
+d_cos_sims <- monet_mvt[[2]]
+
+
+dstep_plot <- qplot(d_step_sizes, bins = 100) +
+  xlim(c(0, 1)) +
+  labs(title = "daily-level step size") +
+  theme_minimal() +
+  theme(axis.title.x=element_blank())
+
+# ggsave(paste0("img/cstep_size_dist_", feature_model, ".png"))
+
+# Visualizing cosine similarity
+csd_plot <- qplot(d_cos_sims, bins = 100) +
+  xlim(c(-1, 1)) +
+  xlab("cosine similarity") +
+  labs(title = "daily-level directional change") +
+  theme_minimal() +
+  theme(axis.title.x=element_blank())
+
+dstep_plot
+
+csd_plot
+```
+
+# Sliding windows analyses
+
+```{r}
+ordered_df <- full_df %>% 
+  mutate(endDate = ymd(paste0(endYear, "01", "01"))) %>% 
+  select(endDate, low_pc1:high_pc100)
+
+# centering embeddings
+# alternatively, mutate_each(funs(.-mean(.)), contains("_pc"))
+ordered_df[2:201] <- ordered_df[2:201]-colMeans(ordered_df[2:201])[col(ordered_df[2:201])]
+
+# no need to aggregate by day for cezanne
+agg_pca <- ordered_df %>% 
+  rename(target_date = endDate)
+
+year_window <- 5 # c(1:70)
+
+first_date <- ymd(18550101)
+last_date <- ymd(19260101)
+
+# (last_date - first_date) / 365
+
+window_size <- years(year_window)
+wstep_size <- 1
+wstep_unit <- "years"
+sample.size <- 40
+
+slidw_df <- sliding_window_mvt(agg_pca, first_date, last_date,
+                               window_size, wstep_size, wstep_unit,
+                               sample.size, sample.method = "first")
+
+write_csv(slidw_df,
+          file.path("results",
+                    paste0("slide_m", year_window, "y_", feature_model, 
+                           "_burst1y_3_test2.csv")))
+```
+
+
+# Visualizing results
+
+```{r}
+slidw_df <- read_csv(file.path("results",
+                               paste0("slide_m5y_", feature_model, 
+                                      "_burst1y_3_test2.csv")))
+
+cstep_slidw_plot <- slidw_df %>% 
+  ggplot(aes(x = start_date, y = cstep_avg)) +
+  geom_line() +
+  # geom_line(aes(y = cstep_pred), color = "blue", linewidth = 1) +
+  xlab("time (year)") +
+  scale_y_continuous(name = expression("Stylistic Change, "*Delta*"("*s[t]*","*s[t+1]*")"),
+                     limits = c(0.1, 0.5)) +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.title=element_text(size=14))
+
+
+# Style manifold dimensionality
+pratio_slidw_plot <- slidw_df %>% 
+  ggplot(aes(x=start_date, y=pratio)) +
+  geom_line() +
+  # geom_vline(xintercept = ymd("1900-08-01"), color = "red") +
+  theme_classic() +
+  geom_smooth(method="lm") +
+  xlab("time (year)") +
+  ylab("Style Manifold Dimensionality") +
+  theme(axis.title=element_text(size=14))
+
+
+
+# Burstiness
+slidw_df <- slidw_df %>% 
+  mutate(rescaled_loc_burst = (loc_burst + 1) / 2)
+
+# slidw_df$adjust_burst[is.infinite(slidw_df$adjust_burst)] <- NA
+
+slidw_df %>% 
+  summarize(avg_loc_burst = mean(rescaled_loc_burst, na.rm = T))
+
+burst_plot <- slidw_df %>%
+  ggplot(aes(x=start_date, y=loc_burst)) +
+  geom_line() +
+  xlab("time (year)") +
+  scale_y_continuous(name="B(stylistic movement)", limits=c(-1,1)) +
+  geom_smooth(method="lm") +
+  theme_classic()
+
+# ggsave(file.path("img", "slidw5y_step1m_loc1sd_burstiness.png"),
+#        width = 12, height = 6)
+
+histburst_plot <- slidw_df %>% 
+  ggplot(aes(x=loc_burst)) +
+  geom_histogram(bins = 100) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  scale_x_continuous(name="Burstiness", limits=c(-1,1)) +
+  scale_y_continuous(expand = c(0,0)) +
+  ylab("frequency") +
+  theme_classic() +
+  theme(axis.title=element_text(size=14))
+
+
+
+plot_grid(cstep_slidw_plot, pratio_slidw_plot, histburst_plot,
+          ncol = 1)
+
+ggsave("img/monet_mvt_test.jpeg", width = 10, height = 10)
+
+
+
+# plot_grid(cstep_slidw_plot, dim_slidw_plot, burst_plot,
+#           ncol = 1)
+# 
+# ggsave("img/monet_mvt2.jpeg", width = 10, height = 10)
+```
+
