@@ -190,12 +190,14 @@ sliding_window_mvt <- function(ordered_pca, first_date, last_date, window_size,
     result_list$sample_sd <- c(result_list$sample_sd, sum(sapply(features.subsample[1:30], sd)))
     
     features.subi.pca <- prcomp(features.subsample)
-    cum.sdev.prop <- cumsum(features.subi.pca$sdev/sum(features.subi.pca$sdev))
+    
+    subi.pca.var <- (features.subi.pca$sdev)^2 # sdev -> var
+    cum.var.prop <- cumsum(subi.pca.var/sum(subi.pca.var))
     
     # sum(features.subi.pca$sdev)
     
-    ## quantifying the number of dimensions to explain x proportion of sdev
-    style_dim90 <- sum((cum.sdev.prop < .90)) + 1
+    ## quantifying the number of dimensions to explain x proportion of variance
+    style_dim90 <- sum((cum.var.prop < .90)) + 1
     
     ## calculating participation rate
     pca.variance <- features.subi.pca$sdev^2 # sdev -> variance
