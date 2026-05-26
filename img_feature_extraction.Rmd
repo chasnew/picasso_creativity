@@ -19,9 +19,6 @@ library(ggrepel)
 home_dir <- path.expand("~")
 picasso_path <- file.path(home_dir, "Library/CloudStorage/Box-Box/QuantifyingPicasso")
 
-van_gogh_path <- file.path(picasso_path, "van_gogh")
-vg_data_path <- file.path(van_gogh_path, "van_gogh_data")
-
 bob_ross_path <- file.path(picasso_path, "bob_ross")
 br_data_path <- file.path(bob_ross_path, "bob_ross_data")
 
@@ -119,26 +116,6 @@ majorPeriodOnset <- tibble(period = c("Blue",
          onsetYear = floor(timeWindow))
 
 preduced_art <- reduced_art
-```
-
-## Van Gogh
-```{r}
-# artwork tabular data
-art_data <- read.csv(file.path(vg_data_path,
-                               "van_gogh_catalogue_raisonne_metadata2.csv"),
-                     colClasses = "character")
-
-img_dir <- file.path(van_gogh_path, "van_gogh_images")
-
-# extract years for Van Gogh's work
-art_data <- art_data %>% 
-  mutate(period = gsub("^.*\\(", "", Era),
-         period = substr(period, 1, nchar(period)-1),
-         year = as.integer(str_extract(gsub("^.* ", "", Origin), "(\\d+)")))
-
-# select necessary columns
-reduced_art <- art_data %>% 
-  select(PaintingName, Era, year, CurrentLocation)
 ```
 
 
