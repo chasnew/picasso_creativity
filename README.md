@@ -15,7 +15,7 @@ The five R-markdown files reproduce all results and figures for the Main Text an
 5. "viz_compose.Rmd" generates both main and supplemental figures.\
 Each of the markdown files can be knitted or executed in R Studio using the current file structure.
 
-The "scraping_scripts" folder contains R scripts used to retrieve Bob Ross', C\'ezanne's, and Monet's paintings and their metadata.\
+The "scraping_scripts" folder contains R scripts used to retrieve Bob Ross', Cézanne's, and Monet's paintings and their metadata.\
 The "results" folder contains pre-computed results used to produce the figures.\
 The "img" folder contains images used to produce figures.\
 The "processed_data" directory contains pre-processed data (PCA features) and cleaned up meta-data needed for the main analyses.
